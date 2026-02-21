@@ -1,0 +1,23 @@
+{
+  "name": "@bakery/cli",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "bakery": "dist/index.js"
+  },
+  "scripts": {
+    "dev": "tsx src/index.ts",
+    "cli": "tsx src/index.ts",
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "@bakery/daemon": "workspace:*",
+    "@bakery/shared": "workspace:*",
+    "@bakery/tui": "workspace:*",
+    "commander": "^13.1.0"
+  }
+}

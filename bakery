@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$ROOT_DIR"
+
+if [[ ! -x "$ROOT_DIR/node_modules/.bin/tsx" ]]; then
+  echo "Missing dependencies. Run: pnpm install"
+  exit 1
+fi
+
+exec node --import tsx "$ROOT_DIR/packages/cli/src/index.ts" "$@"

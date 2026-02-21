@@ -1,0 +1,22 @@
+{
+  "name": "bakery-workspace",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.14.0",
+  "scripts": {
+    "build": "pnpm -r build",
+    "check": "pnpm -r typecheck",
+    "test": "pnpm -r test",
+    "bakery": "./bakery",
+    "dev:daemon": "pnpm --filter @bakery/daemon dev",
+    "dev:cli": "pnpm --filter @bakery/cli dev",
+    "dev:tui": "pnpm --filter @bakery/tui dev"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.1",
+    "tsx": "^4.20.3",
+    "typescript": "^5.8.2",
+    "vitest": "^2.1.8"
+  }
+}

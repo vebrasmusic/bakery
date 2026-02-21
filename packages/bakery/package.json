@@ -1,0 +1,19 @@
+{
+  "name": "bakery",
+  "version": "0.1.0",
+  "type": "module",
+  "bin": {
+    "bakery": "bin/bakery.js"
+  },
+  "files": [
+    "bin"
+  ],
+  "scripts": {
+    "build": "node -e \"process.exit(0)\"",
+    "typecheck": "node -e \"process.exit(0)\"",
+    "test": "node -e \"process.exit(0)\""
+  },
+  "dependencies": {
+    "@bakery/cli": "workspace:*"
+  }
+}

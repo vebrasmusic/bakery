@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Bakery Architecture</title>
+    <style>
+      :root {
+        --bg: #f7f4ee;
+        --ink: #1f2937;
+        --muted: #6b7280;
+        --card: #fff;
+        --accent: #a16207;
+      }
+      body {
+        margin: 0;
+        font-family: "Iowan Old Style", "Palatino Linotype", serif;
+        background: radial-gradient(circle at 20% 0%, #fff, var(--bg));
+        color: var(--ink);
+      }
+      main {
+        max-width: 980px;
+        margin: 0 auto;
+        padding: 24px;
+      }
+      h1, h2 { margin: 0 0 12px; }
+      p { color: var(--muted); line-height: 1.45; }
+      .card {
+        background: var(--card);
+        border: 1px solid #e5e7eb;
+        border-radius: 12px;
+        padding: 16px;
+        margin: 14px 0;
+      }
+      code {
+        background: #fff7ed;
+        color: var(--accent);
+        padding: 2px 6px;
+        border-radius: 6px;
+      }
+      pre {
+        background: #0b1020;
+        color: #e5e7eb;
+        border-radius: 10px;
+        padding: 12px;
+        overflow: auto;
+      }
+      ul { margin: 8px 0 0 18px; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Bakery vNext</h1>
+      <p>Routing-only, multi-pie/multi-slice local orchestration.</p>
+
+      <section class="card">
+        <h2>Core Idea</h2>
+        <ul>
+          <li>Pie and slice are metadata + routing units.</li>
+          <li>Bakery allocates ports and route hosts only.</li>
+          <li>Your runtime scripts start services on allocated ports.</li>
+          <li>Bakery does not orchestrate containers.</li>
+        </ul>
+      </section>
+
+      <section class="card">
+        <h2>Control Plane</h2>
+<pre>
+setup script -> bakery daemon
+  POST /v1/slices
+    { pieId, worktreePath, resources:[{key,protocol,expose}] }
+
+bakery -> returns
+  {
+    sliceId,
+    host,
+    resources:[
+      { key:"r1", allocatedPort:30011, routeUrl:"http://pie-s1.localtest.me:4080" }
+    ]
+  }
+</pre>
+      </section>
+
+      <section class="card">
+        <h2>Data Plane Routing</h2>
+<pre>
+browser -> Host: pie-s1.localtest.me(:4080)
+   -> Bakery embedded proxy
+   -> 127.0.0.1:allocatedPort
+</pre>
+        <p>Primary host pattern: <code>&lt;pieSlug&gt;-s&lt;ordinal&gt;.localtest.me</code></p>
+        <p>Subdomain resources: <code>&lt;resourceKey&gt;.&lt;pieSlug&gt;-s&lt;ordinal&gt;.localtest.me</code></p>
+      </section>
+
+      <section class="card">
+        <h2>Operational Notes</h2>
+        <ul>
+          <li>Default data dir: <code>~/.bakery</code></li>
+          <li>Default DB: <code>~/.bakery/bakery.db</code></li>
+          <li>CLI lifecycle: <code>bakery up</code>, <code>bakery status</code>, <code>bakery down</code></li>
+          <li>Dashboard: run <code>bakery</code> with no subcommand.</li>
+        </ul>
+      </section>
+    </main>
+  </body>
+</html>

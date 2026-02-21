@@ -1,0 +1,27 @@
+{
+  "name": "@bakery/daemon",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "dist/main.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "bakery-daemon": "dist/index.js"
+  },
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@bakery/shared": "workspace:*",
+    "better-sqlite3": "^11.8.1",
+    "express": "^4.21.2",
+    "yaml": "^2.7.0",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/express": "^4.17.21"
+  }
+}
