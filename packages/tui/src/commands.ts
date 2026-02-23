@@ -1,5 +1,6 @@
 import path from "node:path";
 import type {
+  CreateSliceResource,
   CreatePieRequest,
   CreateSliceRequest,
   ListPiesResponse,
@@ -16,7 +17,7 @@ export type TuiCommand =
   | { kind: "pie-create"; name: string; repoPath?: string }
   | { kind: "slice-list"; pieId?: string; all: boolean }
   | { kind: "slice-create-prompt" }
-  | { kind: "slice-create"; pieId: string; worktreePath: string; branch: string; resources: string[] }
+  | { kind: "slice-create"; pieId: string; worktreePath: string; branch: string; numResources: number }
   | { kind: "slice-stop"; id: string }
   | { kind: "slice-rm"; id: string }
   | { kind: "unknown"; reason: string };
@@ -50,6 +51,36 @@ function unquote(token: string): string {
 export function tokenizeCommand(input: string): string[] {
   const tokens = input.match(/"[^"]*"|'[^']*'|\S+/g) ?? [];
   return tokens.map(unquote);
+}
+
+function parsePositiveInteger(value: string): number | null {
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isInteger(parsed) || parsed < 1) {
+    return null;
+  }
+  return parsed;
+}
+
+function parseNumResourcesToken(args: string[]): number | null {
+  const token = args[3];
+  if (token === undefined) {
+    return null;
+  }
+
+  if (token === "--numresources") {
+    const value = args[4];
+    if (value === undefined) {
+      return null;
+    }
+    return parsePositiveInteger(value);
+  }
+
+  if (token.startsWith("--numresources=")) {
+    const value = token.slice("--numresources=".length);
+    return parsePositiveInteger(value);
+  }
+
+  return parsePositiveInteger(token);
 }
 
 export function parseCommand(input: string): TuiCommand {
@@ -101,12 +132,20 @@ export function parseCommand(input: string): TuiCommand {
       return { kind: "slice-create-prompt" };
     }
     if (sub === "create" && args.length >= 4) {
+      const numResources = parseNumResourcesToken(args);
+      if (numResources === null) {
+        return {
+          kind: "unknown",
+          reason:
+            "Usage: slice create <pie> <worktreePath> <branch> <numresources> | slice create <pie> <worktreePath> <branch> --numresources <count>"
+        };
+      }
       return {
         kind: "slice-create",
         pieId: args[0]!,
         worktreePath: args[1]!,
         branch: args[2]!,
-        resources: args[3]!.split(",").map((x) => x.trim()).filter(Boolean)
+        numResources
       };
     }
     if ((sub === "stop" || sub === "rm") && args[0]) {
@@ -117,7 +156,8 @@ export function parseCommand(input: string): TuiCommand {
     }
     return {
       kind: "unknown",
-      reason: "Usage: slice create <pie> <worktreePath> <branch> <key:protocol:expose[,..]> | slice ls [--all|--pie <id>] | slice stop <id> | slice rm <id>"
+      reason:
+        "Usage: slice create <pie> <worktreePath> <branch> <numresources> | slice create <pie> <worktreePath> <branch> --numresources <count> | slice ls [--all|--pie <id>] | slice stop <id> | slice rm <id>"
     };
   }
 
@@ -131,7 +171,7 @@ export function helpText(): string {
     "  pie ls",
     "  pie create [<name> [repoPath]]",
     "  slice ls [--all | --pie <id-or-slug>]",
-    "  slice create [<pie> <worktreePath> <branch> <key:protocol:expose[,..]>]",
+    "  slice create [<pie> <worktreePath> <branch> <numresources>]",
     "  slice stop <sliceId>",
     "  slice rm <sliceId>",
     "  help",
@@ -143,17 +183,30 @@ function toErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Unknown error";
 }
 
-function parseResourceSpec(value: string): { key: string; protocol: "http" | "tcp" | "udp"; expose: "primary" | "subdomain" | "none" } {
-  const [keyRaw, protocolRaw, exposeRaw] = value.split(":");
-  const key = keyRaw?.trim() ?? "";
-  const protocol = (protocolRaw?.trim() ?? "") as "http" | "tcp" | "udp";
-  const expose = (exposeRaw?.trim() ?? "") as "primary" | "subdomain" | "none";
-
-  if (!key || !["http", "tcp", "udp"].includes(protocol) || !["primary", "subdomain", "none"].includes(expose)) {
-    throw new Error(`Invalid resource: ${value}`);
+export function buildDefaultResources(numResources: number): CreateSliceResource[] {
+  if (!Number.isInteger(numResources) || numResources < 1) {
+    throw new Error("--numresources must be a positive integer");
   }
 
-  return { key, protocol, expose };
+  const resources: CreateSliceResource[] = [];
+  for (let index = 1; index <= numResources; index++) {
+    if (index === 1) {
+      resources.push({
+        key: "r1",
+        protocol: "http",
+        expose: "primary"
+      });
+      continue;
+    }
+
+    resources.push({
+      key: `r${index}`,
+      protocol: "tcp",
+      expose: "none"
+    });
+  }
+
+  return resources;
 }
 
 export async function executeCommand(command: TuiCommand, api: TuiCommandApi): Promise<TuiCommandResult> {
@@ -209,7 +262,7 @@ export async function executeCommand(command: TuiCommand, api: TuiCommandApi): P
         pieId: command.pieId,
         worktreePath: path.resolve(command.worktreePath),
         branch: command.branch,
-        resources: command.resources.map(parseResourceSpec)
+        resources: buildDefaultResources(command.numResources)
       });
       return { output: `Created slice ${created.slice.id} (${created.slice.host})`, refresh: true };
     }

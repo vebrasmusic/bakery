@@ -12,7 +12,7 @@ import {
   resolveDaemonUrl,
   stopSlice
 } from "@bakery/shared";
-import { executeCommand, helpText, parseCommand } from "./commands.js";
+import { buildDefaultResources, executeCommand, helpText, parseCommand } from "./commands.js";
 import { renderPieList, renderSliceList, renderStatusDashboard } from "./render.js";
 
 function toErrorMessage(error: unknown): string {
@@ -46,17 +46,6 @@ function expandUserPath(input: string): string {
 
 function resolveUserPath(input: string): string {
   return path.resolve(expandUserPath(input));
-}
-
-function parseResourceSpec(value: string): { key: string; protocol: "http" | "tcp" | "udp"; expose: "primary" | "subdomain" | "none" } {
-  const [keyRaw, protocolRaw, exposeRaw] = value.split(":");
-  const key = keyRaw?.trim() ?? "";
-  const protocol = (protocolRaw?.trim() ?? "") as "http" | "tcp" | "udp";
-  const expose = (exposeRaw?.trim() ?? "") as "primary" | "subdomain" | "none";
-  if (!key || !["http", "tcp", "udp"].includes(protocol) || !["primary", "subdomain", "none"].includes(expose)) {
-    throw new Error(`Invalid resource spec: ${value}. Use key:protocol:expose`);
-  }
-  return { key, protocol, expose };
 }
 
 async function main(): Promise<void> {
@@ -125,25 +114,22 @@ async function main(): Promise<void> {
       const pieId = (await promptValue("Pie (id or slug)")).trim();
       const worktreePath = resolveUserPath(await promptValue("Worktree path", "."));
       const branch = (await promptValue("Branch", "main")).trim() || "main";
-      const resourceSpec = (
-        await promptValue(
-          "Resources (comma-separated key:protocol:expose)",
-          "web:http:primary,api:http:subdomain,db:tcp:none"
-        )
-      )
-        .split(",")
-        .map((token) => token.trim())
-        .filter(Boolean);
+      const numResourcesInput = (await promptValue("Number of resources (--numresources)", "3")).trim();
 
-      if (!pieId || resourceSpec.length === 0) {
-        return { output: "Slice create cancelled: pie and at least one resource are required." };
+      if (!pieId) {
+        return { output: "Slice create cancelled: pie is required." };
+      }
+
+      const numResources = Number.parseInt(numResourcesInput, 10);
+      if (!Number.isInteger(numResources) || numResources < 1) {
+        return { output: "Slice create cancelled: --numresources must be a positive integer." };
       }
 
       const created = await api.createSlice({
         pieId,
         worktreePath,
         branch,
-        resources: resourceSpec.map(parseResourceSpec)
+        resources: buildDefaultResources(numResources)
       });
 
       return {

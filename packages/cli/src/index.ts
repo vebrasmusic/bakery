@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
+import readline from "node:readline/promises";
 import { Command, InvalidArgumentError } from "commander";
 import { resolveDaemonUrl } from "@bakery/shared";
 import { formatDaemonDown, formatStatus } from "./format.js";
-import { formatPieList, runPieCreate, runPieList } from "./pie.js";
+import { formatPieList, runPieCreate, runPieList, runPieRemove } from "./pie.js";
 import { formatSliceList, runSliceCreate, runSliceList, runSliceRemove, runSliceStop } from "./slice.js";
 import { downDaemon, probeStatus, resolveTuiEntrypoint, upDaemon } from "./runtime.js";
 
@@ -21,6 +22,26 @@ function parsePositiveInteger(value: string): number {
     throw new InvalidArgumentError("must be a positive integer");
   }
   return parsed;
+}
+
+async function confirmPieRemoval(pieIdentifier: string): Promise<boolean> {
+  if (!process.stdin.isTTY || !process.stdout.isTTY) {
+    throw new Error("Refusing to delete pie without confirmation in non-interactive mode. Re-run with --force.");
+  }
+
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout
+  });
+
+  try {
+    const answer = await rl.question(
+      `Delete pie ${pieIdentifier} and all associated slices/resources? Type "yes" to confirm: `
+    );
+    return answer.trim().toLowerCase() === "yes";
+  } finally {
+    rl.close();
+  }
 }
 
 function resolveGlobals(): { daemonUrl?: string } {
@@ -224,6 +245,30 @@ pie
       process.stdout.write(`${formatPieList(pies)}\n`);
     } catch (error) {
       process.stderr.write(`Pie list failed: ${toErrorMessage(error)}\n`);
+      process.exitCode = 1;
+    }
+  });
+
+pie
+  .command("rm")
+  .description("Delete a pie and all associated slices/resources")
+  .requiredOption("--id <id-or-slug>", "Pie identifier")
+  .option("--force", "Delete without confirmation")
+  .action(async (options: { id: string; force?: boolean }) => {
+    const globals = resolveGlobals();
+    try {
+      if (!options.force) {
+        const confirmed = await confirmPieRemoval(options.id);
+        if (!confirmed) {
+          process.stdout.write("Pie rm cancelled.\n");
+          return;
+        }
+      }
+
+      await runPieRemove({ id: options.id }, globals);
+      process.stdout.write(`Removed pie ${options.id}\n`);
+    } catch (error) {
+      process.stderr.write(`Pie rm failed: ${toErrorMessage(error)}\n`);
       process.exitCode = 1;
     }
   });

@@ -11,12 +11,22 @@ describe("commands", () => {
   });
 
   it("parses non-interactive slice create", () => {
-    expect(parseCommand("slice create app . main web:http:primary,db:tcp:none")).toEqual({
+    expect(parseCommand("slice create app . main 3")).toEqual({
       kind: "slice-create",
       pieId: "app",
       worktreePath: ".",
       branch: "main",
-      resources: ["web:http:primary", "db:tcp:none"]
+      numResources: 3
+    });
+  });
+
+  it("parses non-interactive slice create with --numresources flag", () => {
+    expect(parseCommand("slice create app . main --numresources 4")).toEqual({
+      kind: "slice-create",
+      pieId: "app",
+      worktreePath: ".",
+      branch: "main",
+      numResources: 4
     });
   });
 

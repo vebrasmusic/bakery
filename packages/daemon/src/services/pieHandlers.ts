@@ -1,12 +1,20 @@
 import path from "node:path";
-import type { CreatePieRequest, Pie } from "@bakery/shared";
+import type { CreatePieRequest, Pie, Slice } from "@bakery/shared";
 import { CreatePieRequestSchema } from "@bakery/shared";
 import { resolveUserPath } from "./pathing.js";
 
 export interface PieRepository {
   createPie(input: { name: string; slug: string; repoPath?: string | null }): Pie;
   listPies(): Pie[];
+  findPieByIdOrSlug(identifier: string): Pie | null;
+  listSlices(input: { pieId?: string; all?: boolean }): Slice[];
+  deletePie(pieId: string): void;
   appendAuditLog(input: { kind: string; pieId?: string; sliceId?: string; payload: unknown }): void;
+}
+
+export interface PieOrchestratorLike {
+  stopSlice(slice: Slice): Promise<void>;
+  removeSlice(slice: Slice): Promise<void>;
 }
 
 export interface PieCreateDependencies {
@@ -54,4 +62,43 @@ export function handleCreatePie(input: unknown, deps: PieCreateDependencies): Pi
 
 export function handleListPies(repo: PieRepository): { pies: Pie[] } {
   return { pies: repo.listPies() };
+}
+
+export async function handleRemovePie(
+  input: { pieIdentifier: string },
+  deps: { repo: PieRepository; orchestrator: PieOrchestratorLike }
+): Promise<void> {
+  const pieIdentifier = input.pieIdentifier.trim();
+  if (!pieIdentifier) {
+    throw new Error("Pie identifier is required");
+  }
+
+  const pie = deps.repo.findPieByIdOrSlug(pieIdentifier);
+  if (!pie) {
+    throw new Error("Pie not found");
+  }
+
+  const slices = deps.repo.listSlices({ pieId: pie.id });
+  for (const slice of slices) {
+    if (slice.status !== "stopped") {
+      await deps.orchestrator.stopSlice(slice);
+    }
+    await deps.orchestrator.removeSlice(slice);
+    deps.repo.appendAuditLog({
+      kind: "slice.deleted",
+      pieId: pie.id,
+      sliceId: slice.id,
+      payload: { reason: "pie.deleted" }
+    });
+  }
+
+  deps.repo.deletePie(pie.id);
+  deps.repo.appendAuditLog({
+    kind: "pie.deleted",
+    payload: {
+      pieId: pie.id,
+      slug: pie.slug,
+      deletedSlices: slices.length
+    }
+  });
 }

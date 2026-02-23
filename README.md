@@ -17,6 +17,7 @@ bakery up
 bakery status
 bakery pie create --name myapp --repo ~/code/myapp
 bakery slice create --pie myapp --numresources 3 --worktree .
+bakery pie rm --id myapp --force
 bakery down
 ```
 
@@ -34,6 +35,7 @@ Then:
 pnpm exec bakery up
 pnpm exec bakery pie create --name myapp
 pnpm exec bakery slice create --pie myapp --numresources 3 --worktree "$PWD"
+pnpm exec bakery pie rm --id myapp --force
 pnpm exec slice create --pie myapp --numresources 3 --worktree "$PWD"
 ```
 

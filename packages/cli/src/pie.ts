@@ -1,6 +1,6 @@
 import os from "node:os";
 import path from "node:path";
-import { createPie, listPies } from "@bakery/shared";
+import { createPie, listPies, removePie } from "@bakery/shared";
 
 export interface CliGlobalOptions {
   daemonUrl?: string;
@@ -81,4 +81,17 @@ export async function runPieList(globals: CliGlobalOptions): Promise<PieRow[]> {
     createdAt: pie.createdAt,
     ...(pie.repoPath !== undefined ? { repoPath: pie.repoPath } : {})
   }));
+}
+
+export async function runPieRemove(
+  options: {
+    id: string;
+  },
+  globals: CliGlobalOptions
+): Promise<void> {
+  const clientOptions: CliGlobalOptions = {};
+  if (globals.daemonUrl !== undefined) {
+    clientOptions.daemonUrl = globals.daemonUrl;
+  }
+  await removePie(options.id, clientOptions);
 }

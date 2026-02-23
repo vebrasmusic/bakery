@@ -108,6 +108,10 @@ export class BakeryRepository {
     return row ? toPie(row) : null;
   }
 
+  deletePie(pieId: string): void {
+    this.db.prepare(`DELETE FROM pies WHERE id = ?`).run(pieId);
+  }
+
   getNextSliceOrdinal(pieId: string): number {
     const row = this.db
       .prepare(`SELECT COALESCE(MAX(ordinal), 0) AS max_ordinal FROM slices WHERE pie_id = ?`)

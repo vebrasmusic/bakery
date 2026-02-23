@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { createPie, createSlice, listPies, listSlices, removeSlice, stopSlice } from "./daemonClient.js";
+import { createPie, createSlice, listPies, listSlices, removePie, removeSlice, stopSlice } from "./daemonClient.js";
 
 describe("daemonClient", () => {
   it("lists pies", async () => {
@@ -176,6 +176,23 @@ describe("daemonClient", () => {
     expect(fetchImpl).toHaveBeenNthCalledWith(
       3,
       "http://127.0.0.1:47123/v1/slices/slice-1",
+      expect.objectContaining({
+        method: "DELETE"
+      })
+    );
+  });
+
+  it("removes pie without extra headers", async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValue(
+        new Response(JSON.stringify({ ok: true }), { status: 200, headers: { "content-type": "application/json" } })
+      );
+
+    await removePie("pie-one", { daemonUrl: "http://127.0.0.1:47123", fetchImpl });
+
+    expect(fetchImpl).toHaveBeenCalledWith(
+      "http://127.0.0.1:47123/v1/pies/pie-one",
       expect.objectContaining({
         method: "DELETE"
       })

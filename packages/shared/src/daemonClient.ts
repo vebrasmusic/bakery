@@ -82,6 +82,26 @@ export async function createPie(
   return CreatePieResponseSchema.parse(payload);
 }
 
+export async function removePie(
+  pieIdentifier: string,
+  options: DaemonRequestOptions = {}
+): Promise<MutationOkResponse> {
+  const normalizedPieIdentifier = pieIdentifier.trim();
+  if (!normalizedPieIdentifier) {
+    throw new Error("Pie identifier is required");
+  }
+
+  const payload = await requestJson(
+    `/v1/pies/${encodeURIComponent(normalizedPieIdentifier)}`,
+    {
+      method: "DELETE",
+      headers: { accept: "application/json" }
+    },
+    options
+  );
+  return MutationOkResponseSchema.parse(payload);
+}
+
 export async function listSlices(
   query: SliceListQuery = {},
   options: DaemonRequestOptions = {}

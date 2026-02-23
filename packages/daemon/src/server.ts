@@ -8,7 +8,7 @@ import { BakeryRepository } from "./repos/repository.js";
 import { SliceOrchestrator } from "./services/orchestrator.js";
 import { PortAllocator } from "./services/portAllocator.js";
 import { createRouterProxyServer } from "./services/routerProxy.js";
-import { handleCreatePie, handleListPies } from "./services/pieHandlers.js";
+import { handleCreatePie, handleListPies, handleRemovePie } from "./services/pieHandlers.js";
 import { handleCreateSlice, handleListSlices, handleRemoveSlice, handleStopSlice } from "./services/sliceHandlers.js";
 import { buildStatusResponse } from "./services/status.js";
 
@@ -140,6 +140,27 @@ export async function createDaemon(): Promise<DaemonInstance> {
     } catch (error) {
       if (error instanceof Error && error.message.includes("UNIQUE constraint failed: pies.slug")) {
         res.status(409).json({ error: "Pie slug already exists. Choose a unique pie name." });
+        return;
+      }
+      res.status(400).json({ error: sanitizeError(error).message });
+    }
+  });
+
+  app.delete("/v1/pies/:id", async (req, res) => {
+    try {
+      await handleRemovePie(
+        {
+          pieIdentifier: req.params.id
+        },
+        {
+          repo,
+          orchestrator
+        }
+      );
+      res.json({ ok: true });
+    } catch (error) {
+      if (error instanceof Error && error.message === "Pie not found") {
+        res.status(404).json({ error: "Pie not found" });
         return;
       }
       res.status(400).json({ error: sanitizeError(error).message });
