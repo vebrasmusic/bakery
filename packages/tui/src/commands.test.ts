@@ -3,7 +3,7 @@ import { executeCommand, helpText, parseCommand, tokenizeCommand } from "./comma
 
 describe("commands", () => {
   it("tokenizes quoted command", () => {
-    expect(tokenizeCommand('pie create "my app" ~/repo')).toEqual(["pie", "create", "my app", "~/repo"]);
+    expect(tokenizeCommand('pie create "my app"')).toEqual(["pie", "create", "my app"]);
   });
 
   it("parses pie create prompt mode", () => {
@@ -11,23 +11,27 @@ describe("commands", () => {
   });
 
   it("parses non-interactive slice create", () => {
-    expect(parseCommand("slice create app . main 3")).toEqual({
+    expect(parseCommand("slice create app 3")).toEqual({
       kind: "slice-create",
       pieId: "app",
-      worktreePath: ".",
-      branch: "main",
       numResources: 3
     });
   });
 
   it("parses non-interactive slice create with --numresources flag", () => {
-    expect(parseCommand("slice create app . main --numresources 4")).toEqual({
+    expect(parseCommand("slice create app --numresources 4")).toEqual({
       kind: "slice-create",
       pieId: "app",
-      worktreePath: ".",
-      branch: "main",
       numResources: 4
     });
+  });
+
+  it("rejects legacy slice create syntax", () => {
+    const parsed = parseCommand("slice create app . main 3");
+    expect(parsed.kind).toBe("unknown");
+    if (parsed.kind === "unknown") {
+      expect(parsed.reason).toContain("Usage: slice create <pie> <numresources>");
+    }
   });
 
   it("parses pie rm", () => {
@@ -52,8 +56,6 @@ describe("commands", () => {
           pieId: "p1",
           ordinal: 2,
           host: "new-s1.localtest.me",
-          worktreePath: "/tmp/new",
-          branch: "main",
           status: "running",
           createdAt: "2026-02-20T00:10:00.000Z",
           stoppedAt: null,
@@ -82,7 +84,7 @@ describe("commands", () => {
     };
 
     const result = await executeCommand(
-      { kind: "slice-create", pieId: "my-app", worktreePath: ".", branch: "main", numResources: 2 },
+      { kind: "slice-create", pieId: "my-app", numResources: 2 },
       api
     );
 

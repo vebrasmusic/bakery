@@ -4,7 +4,6 @@ export interface Pie {
   id: string;
   name: string;
   slug: string;
-  repoPath?: string | null;
   createdAt: string;
 }
 
@@ -25,8 +24,6 @@ export interface Slice {
   pieId: string;
   ordinal: number;
   host: string;
-  worktreePath: string;
-  branch: string;
   status: SliceStatus;
   createdAt: string;
   stoppedAt: string | null;

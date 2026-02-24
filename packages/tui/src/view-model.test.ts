@@ -6,7 +6,6 @@ const mockPie: Pie = {
   id: "p1",
   name: "My App",
   slug: "my-app",
-  repoPath: null,
   createdAt: "2026-02-20T00:00:00.000Z",
 };
 
@@ -15,8 +14,6 @@ const mockSlice: SliceWithResources = {
   pieId: "p1",
   ordinal: 1,
   host: "app-s1.localtest.me",
-  worktreePath: "/tmp/app",
-  branch: "main",
   status: "running",
   createdAt: "2026-02-20T00:00:00.000Z",
   stoppedAt: null,
@@ -100,9 +97,14 @@ describe("buildSlicePaneRows", () => {
     const rows = buildSlicePaneRows({ pies: [mockPie], slices: [mockSlice] });
     expect(rows).toHaveLength(2);
     expect(rows[0]!.rowType).toBe("pie");
+    expect(rows[0]!.depth).toBe(0);
     expect(rows[0]!.label).toContain("my-app");
     expect(rows[1]!.rowType).toBe("slice");
+    expect(rows[1]!.depth).toBe(1);
     expect(rows[1]!.label).toContain("s1");
+    expect(rows[1]!.label).toContain("running");
+    expect(rows[1]!.label).not.toContain("localtest.me");
+    expect(rows[1]!.label).not.toContain("r1:30001");
   });
 
   it("adds orphan group rows when pie is missing", () => {

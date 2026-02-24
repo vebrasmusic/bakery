@@ -4,14 +4,14 @@ export const PieSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1),
   slug: z.string().min(1),
-  repoPath: z.string().min(1).nullable().optional(),
   createdAt: z.string().datetime()
 });
 
-export const CreatePieRequestSchema = z.object({
-  name: z.string().min(1),
-  repoPath: z.string().min(1).optional()
-});
+export const CreatePieRequestSchema = z
+  .object({
+    name: z.string().min(1)
+  })
+  .strict();
 export type CreatePieRequest = z.infer<typeof CreatePieRequestSchema>;
 
 export const ListPiesResponseSchema = z.object({
@@ -50,8 +50,6 @@ export const SliceSchema = z.object({
   pieId: z.string().min(1),
   ordinal: z.number().int().positive(),
   host: z.string().min(1),
-  worktreePath: z.string().min(1),
-  branch: z.string().min(1),
   status: z.enum(["creating", "running", "stopped", "error"]),
   createdAt: z.string().datetime(),
   stoppedAt: z.string().datetime().nullable()
@@ -70,10 +68,9 @@ export const OrchestratedSliceSchema = SliceWithResourcesSchema.extend({
 export const CreateSliceRequestSchema = z
   .object({
     pieId: z.string().min(1),
-    worktreePath: z.string().min(1),
-    branch: z.string().min(1).optional().default("main"),
     resources: z.array(CreateSliceResourceSchema).min(1)
   })
+  .strict()
   .superRefine((value, ctx) => {
     const keys = new Set<string>();
     for (const resource of value.resources) {

@@ -1,4 +1,3 @@
-import path from "node:path";
 import type {
   CreateSliceResource,
   CreatePieRequest,
@@ -16,11 +15,11 @@ export type TuiCommand =
   | { kind: "status" }
   | { kind: "pie-list" }
   | { kind: "pie-create-prompt" }
-  | { kind: "pie-create"; name: string; repoPath?: string }
+  | { kind: "pie-create"; name: string }
   | { kind: "pie-rm"; id: string }
   | { kind: "slice-list"; pieId?: string; all: boolean }
   | { kind: "slice-create-prompt" }
-  | { kind: "slice-create"; pieId: string; worktreePath: string; branch: string; numResources: number }
+  | { kind: "slice-create"; pieId: string; numResources: number }
   | { kind: "slice-stop"; id: string }
   | { kind: "slice-rm"; id: string }
   | { kind: "unknown"; reason: string };
@@ -65,25 +64,31 @@ function parsePositiveInteger(value: string): number | null {
   return parsed;
 }
 
-function parseNumResourcesToken(args: string[]): number | null {
-  const token = args[3];
+function parseSliceCreateNumResources(args: string[]): number | null {
+  const token = args[1];
   if (token === undefined) {
     return null;
   }
 
   if (token === "--numresources") {
-    const value = args[4];
-    if (value === undefined) {
+    const value = args[2];
+    if (value === undefined || args.length !== 3) {
       return null;
     }
     return parsePositiveInteger(value);
   }
 
   if (token.startsWith("--numresources=")) {
+    if (args.length !== 2) {
+      return null;
+    }
     const value = token.slice("--numresources=".length);
     return parsePositiveInteger(value);
   }
 
+  if (args.length !== 2) {
+    return null;
+  }
   return parsePositiveInteger(token);
 }
 
@@ -111,15 +116,13 @@ export function parseCommand(input: string): TuiCommand {
     if (sub === "create" && args.length === 0) {
       return { kind: "pie-create-prompt" };
     }
-    if (sub === "create" && args.length >= 1 && args[0]) {
-      return args[1]
-        ? { kind: "pie-create", name: args[0], repoPath: args[1] }
-        : { kind: "pie-create", name: args[0] };
+    if (sub === "create" && args.length === 1 && args[0]) {
+      return { kind: "pie-create", name: args[0] };
     }
     if (sub === "rm" && args[0]) {
       return { kind: "pie-rm", id: args[0] };
     }
-    return { kind: "unknown", reason: "Usage: pie create [<name> [repoPath]] | pie ls | pie rm <id-or-slug>" };
+    return { kind: "unknown", reason: "Usage: pie create [<name>] | pie ls | pie rm <id-or-slug>" };
   }
   if (head === "slice") {
     const [sub, ...args] = rest;
@@ -138,20 +141,25 @@ export function parseCommand(input: string): TuiCommand {
     if (sub === "create" && args.length === 0) {
       return { kind: "slice-create-prompt" };
     }
-    if (sub === "create" && args.length >= 4) {
-      const numResources = parseNumResourcesToken(args);
+    if (sub === "create" && args.length >= 2) {
+      if (!args[0]) {
+        return {
+          kind: "unknown",
+          reason:
+            "Usage: slice create <pie> <numresources> | slice create <pie> --numresources <count>"
+        };
+      }
+      const numResources = parseSliceCreateNumResources(args);
       if (numResources === null) {
         return {
           kind: "unknown",
           reason:
-            "Usage: slice create <pie> <worktreePath> <branch> <numresources> | slice create <pie> <worktreePath> <branch> --numresources <count>"
+            "Usage: slice create <pie> <numresources> | slice create <pie> --numresources <count>"
         };
       }
       return {
         kind: "slice-create",
         pieId: args[0]!,
-        worktreePath: args[1]!,
-        branch: args[2]!,
         numResources
       };
     }
@@ -164,7 +172,7 @@ export function parseCommand(input: string): TuiCommand {
     return {
       kind: "unknown",
       reason:
-        "Usage: slice create <pie> <worktreePath> <branch> <numresources> | slice create <pie> <worktreePath> <branch> --numresources <count> | slice ls [--all|--pie <id>] | slice stop <id> | slice rm <id>"
+        "Usage: slice create <pie> <numresources> | slice create <pie> --numresources <count> | slice ls [--all|--pie <id>] | slice stop <id> | slice rm <id>"
     };
   }
 
@@ -176,10 +184,10 @@ export function helpText(): string {
     "Commands:",
     "  status",
     "  pie ls",
-    "  pie create [<name> [repoPath]]",
+    "  pie create [<name>]",
     "  pie rm <id-or-slug>",
     "  slice ls [--all | --pie <id-or-slug>]",
-    "  slice create [<pie> <worktreePath> <branch> <numresources>]",
+    "  slice create [<pie> <numresources>]",
     "  slice stop <sliceId>",
     "  slice rm <sliceId>",
     "  help",
@@ -252,10 +260,7 @@ export async function executeCommand(command: TuiCommand, api: TuiCommandApi): P
     }
 
     if (command.kind === "pie-create") {
-      const created = await api.createPie({
-        name: command.name,
-        repoPath: command.repoPath ? path.resolve(command.repoPath) : undefined
-      });
+      const created = await api.createPie({ name: command.name });
       return { output: `Created pie ${created.pie.slug} (${created.pie.id})`, refresh: true };
     }
 
@@ -273,8 +278,6 @@ export async function executeCommand(command: TuiCommand, api: TuiCommandApi): P
     if (command.kind === "slice-create") {
       const created = await api.createSlice({
         pieId: command.pieId,
-        worktreePath: path.resolve(command.worktreePath),
-        branch: command.branch,
         resources: buildDefaultResources(command.numResources)
       });
       const output = toSliceCreateOutput(created.slice);

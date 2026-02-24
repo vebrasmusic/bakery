@@ -1,7 +1,6 @@
 import { CreateSliceRequestSchema, type Pie, type Slice } from "@bakery/shared";
 import type { SliceWithResources } from "../repos/repository.js";
 import type { OrchestratedSlice } from "./orchestrator.js";
-import { resolveUserPath } from "./pathing.js";
 
 export interface SliceRepository {
   findPieByIdOrSlug(identifier: string): Pie | null;
@@ -13,8 +12,6 @@ export interface SliceRepository {
 export interface SliceOrchestratorLike {
   createSlice(input: {
     pie: Pie;
-    worktreePath: string;
-    branch: string;
     resources: Array<{ key: string; protocol: "http" | "tcp" | "udp"; expose: "primary" | "subdomain" | "none" }>;
   }): Promise<OrchestratedSlice>;
   stopSlice(slice: Slice): Promise<void>;
@@ -33,12 +30,8 @@ export async function handleCreateSlice(input: unknown, deps: SliceCreateDepende
     throw new Error("Pie not found");
   }
 
-  const worktreePath = resolveUserPath(payload.worktreePath);
-
   const created = await deps.orchestrator.createSlice({
     pie,
-    worktreePath,
-    branch: payload.branch,
     resources: payload.resources
   });
 
@@ -47,8 +40,6 @@ export async function handleCreateSlice(input: unknown, deps: SliceCreateDepende
     pieId: pie.id,
     sliceId: created.id,
     payload: {
-      branch: payload.branch,
-      worktreePath,
       host: created.host,
       resources: created.resources
     }

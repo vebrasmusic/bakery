@@ -18,7 +18,6 @@ function toPie(row: any): Pie {
     id: row.id,
     name: row.name,
     slug: row.slug,
-    repoPath: row.repo_path ?? null,
     createdAt: row.created_at
   };
 }
@@ -29,8 +28,6 @@ function toSlice(row: any): Slice {
     pieId: row.pie_id,
     ordinal: row.ordinal,
     host: row.host,
-    worktreePath: row.worktree_path,
-    branch: row.branch,
     status: row.status,
     createdAt: row.created_at,
     stoppedAt: row.stopped_at ?? null
@@ -76,21 +73,20 @@ export class BakeryRepository {
     private readonly routerPortProvider: () => number
   ) {}
 
-  createPie(input: { name: string; slug: string; repoPath?: string | null }): Pie {
+  createPie(input: { name: string; slug: string }): Pie {
     const id = randomUUID();
     const createdAt = nowIso();
     this.db
       .prepare(
-        `INSERT INTO pies (id, name, slug, repo_path, created_at)
-         VALUES (?, ?, ?, ?, ?)`
+        `INSERT INTO pies (id, name, slug, created_at)
+         VALUES (?, ?, ?, ?)`
       )
-      .run(id, input.name, input.slug, input.repoPath ?? null, createdAt);
+      .run(id, input.name, input.slug, createdAt);
 
     return {
       id,
       name: input.name,
       slug: input.slug,
-      repoPath: input.repoPath ?? null,
       createdAt
     };
   }
@@ -122,8 +118,6 @@ export class BakeryRepository {
     pieId: string;
     ordinal: number;
     host: string;
-    worktreePath: string;
-    branch: string;
     status: SliceStatus;
   }): Slice {
     const id = randomUUID();
@@ -132,18 +126,16 @@ export class BakeryRepository {
     this.db
       .prepare(
         `INSERT INTO slices
-          (id, pie_id, ordinal, host, worktree_path, branch, status, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+          (id, pie_id, ordinal, host, status, created_at)
+         VALUES (?, ?, ?, ?, ?, ?)`
       )
-      .run(id, input.pieId, input.ordinal, input.host, input.worktreePath, input.branch, input.status, createdAt);
+      .run(id, input.pieId, input.ordinal, input.host, input.status, createdAt);
 
     return {
       id,
       pieId: input.pieId,
       ordinal: input.ordinal,
       host: input.host,
-      worktreePath: input.worktreePath,
-      branch: input.branch,
       status: input.status,
       createdAt,
       stoppedAt: null

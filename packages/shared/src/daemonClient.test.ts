@@ -11,7 +11,6 @@ describe("daemonClient", () => {
               id: "p1",
               name: "Pie One",
               slug: "pie-one",
-              repoPath: "/tmp/repo",
               createdAt: "2026-02-20T00:00:00.000Z"
             }
           ]
@@ -36,7 +35,6 @@ describe("daemonClient", () => {
             id: "p1",
             name: "Pie One",
             slug: "pie-one",
-            repoPath: "/tmp/repo",
             createdAt: "2026-02-20T00:00:00.000Z"
           }
         }),
@@ -46,8 +44,7 @@ describe("daemonClient", () => {
 
     await createPie(
       {
-        name: "Pie One",
-        repoPath: "/tmp/repo"
+        name: "Pie One"
       },
       { daemonUrl: "http://127.0.0.1:47123", fetchImpl }
     );
@@ -73,8 +70,6 @@ describe("daemonClient", () => {
               pieId: "p1",
               ordinal: 1,
               host: "pie-s1.localtest.me",
-              worktreePath: "/tmp/worktree",
-              branch: "main",
               status: "running",
               createdAt: "2026-02-20T00:00:00.000Z",
               stoppedAt: null,
@@ -114,8 +109,6 @@ describe("daemonClient", () => {
               pieId: "p1",
               ordinal: 1,
               host: "pie-s1.localtest.me",
-              worktreePath: "/tmp/worktree",
-              branch: "main",
               status: "running",
               createdAt: "2026-02-20T00:00:00.000Z",
               stoppedAt: null,
@@ -146,8 +139,6 @@ describe("daemonClient", () => {
     await createSlice(
       {
         pieId: "pie-one",
-        worktreePath: "/tmp/worktree",
-        branch: "main",
         resources: [{ key: "web", protocol: "http", expose: "primary" }]
       },
       {
@@ -197,5 +188,37 @@ describe("daemonClient", () => {
         method: "DELETE"
       })
     );
+  });
+
+  it("rejects deprecated create pie payload fields", async () => {
+    const fetchImpl = vi.fn();
+
+    await expect(
+      createPie(
+        {
+          name: "Pie One",
+          repoPath: "/tmp/repo"
+        } as unknown as Parameters<typeof createPie>[0],
+        { daemonUrl: "http://127.0.0.1:47123", fetchImpl }
+      )
+    ).rejects.toThrow();
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("rejects deprecated create slice payload fields", async () => {
+    const fetchImpl = vi.fn();
+
+    await expect(
+      createSlice(
+        {
+          pieId: "pie-one",
+          worktreePath: "/tmp/worktree",
+          branch: "main",
+          resources: [{ key: "web", protocol: "http", expose: "primary" }]
+        } as unknown as Parameters<typeof createSlice>[0],
+        { daemonUrl: "http://127.0.0.1:47123", fetchImpl }
+      )
+    ).rejects.toThrow();
+    expect(fetchImpl).not.toHaveBeenCalled();
   });
 });

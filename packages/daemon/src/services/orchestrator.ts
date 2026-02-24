@@ -4,8 +4,6 @@ import type { PortAllocator } from "./portAllocator.js";
 
 export interface SliceCreateInput {
   pie: Pie;
-  worktreePath: string;
-  branch: string;
   resources: CreateSliceResource[];
 }
 
@@ -47,8 +45,6 @@ export class SliceOrchestrator {
       pieId: input.pie.id,
       ordinal,
       host,
-      worktreePath: input.worktreePath,
-      branch: input.branch,
       status: "running"
     });
 

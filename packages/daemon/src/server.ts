@@ -1,4 +1,3 @@
-import { existsSync, statSync } from "node:fs";
 import http from "node:http";
 import express from "express";
 import { ZodError } from "zod";
@@ -11,19 +10,6 @@ import { createRouterProxyServer } from "./services/routerProxy.js";
 import { handleCreatePie, handleListPies, handleRemovePie } from "./services/pieHandlers.js";
 import { handleCreateSlice, handleListSlices, handleRemoveSlice, handleStopSlice } from "./services/sliceHandlers.js";
 import { buildStatusResponse } from "./services/status.js";
-
-function assertPathExists(filePath: string, expectedType: "file" | "directory"): void {
-  if (!existsSync(filePath)) {
-    throw new Error(`Path does not exist: ${filePath}`);
-  }
-  const stat = statSync(filePath);
-  if (expectedType === "file" && !stat.isFile()) {
-    throw new Error(`Expected a file path: ${filePath}`);
-  }
-  if (expectedType === "directory" && !stat.isDirectory()) {
-    throw new Error(`Expected a directory path: ${filePath}`);
-  }
-}
 
 function sanitizeError(error: unknown): { message: string } {
   if (error instanceof ZodError) {
@@ -132,8 +118,7 @@ export async function createDaemon(): Promise<DaemonInstance> {
   app.post("/v1/pies", (req, res) => {
     try {
       const pie = handleCreatePie(req.body, {
-        repo,
-        assertPathExists
+        repo
       });
 
       res.status(201).json({ pie });

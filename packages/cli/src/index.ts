@@ -218,8 +218,7 @@ pie
   .command("create")
   .description("Create a pie")
   .requiredOption("--name <name>", "Pie name")
-  .option("--repo <path>", "Repository path (optional metadata)")
-  .action(async (options: { name: string; repo?: string }) => {
+  .action(async (options: { name: string }) => {
     const globals = resolveGlobals();
     try {
       const result = await runPieCreate(options, globals);
@@ -281,16 +280,12 @@ slice
   .requiredOption("--pie <id-or-slug>", "Pie identifier")
   .requiredOption("--numresources <count>", "Number of resources to allocate", parsePositiveInteger)
   .option("--slice <name>", "Optional slice label for caller-side usage")
-  .option("--worktree <path>", "Worktree path", ".")
-  .option("--branch <name>", "Git branch name", "main")
   .option("--text", "Emit human-readable output instead of JSON")
   .action(
     async (options: {
       pie: string;
       numresources: number;
       slice?: string;
-      worktree?: string;
-      branch?: string;
       text?: boolean;
     }) => {
       const globals = resolveGlobals();
@@ -299,9 +294,7 @@ slice
           {
             pie: options.pie,
             numResources: options.numresources,
-            ...(options.slice ? { sliceName: options.slice } : {}),
-            ...(options.worktree ? { worktree: options.worktree } : {}),
-            ...(options.branch ? { branch: options.branch } : {})
+            ...(options.slice ? { sliceName: options.slice } : {})
           },
           globals
         );

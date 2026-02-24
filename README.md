@@ -15,8 +15,8 @@ Then use from anywhere:
 ```bash
 bakery up
 bakery status
-bakery pie create --name myapp --repo ~/code/myapp
-bakery slice create --pie myapp --numresources 3 --worktree .
+bakery pie create --name myapp
+bakery slice create --pie myapp --numresources 3
 bakery pie rm --id myapp --force
 bakery down
 ```
@@ -34,9 +34,9 @@ Then:
 ```bash
 pnpm exec bakery up
 pnpm exec bakery pie create --name myapp
-pnpm exec bakery slice create --pie myapp --numresources 3 --worktree "$PWD"
+pnpm exec bakery slice create --pie myapp --numresources 3
 pnpm exec bakery pie rm --id myapp --force
-pnpm exec slice create --pie myapp --numresources 3 --worktree "$PWD"
+pnpm exec slice create --pie myapp --numresources 3
 ```
 
 ## Local Workspace Testing (this repo)

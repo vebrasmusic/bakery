@@ -7,7 +7,6 @@ describe("pieHandlers", () => {
       id: "pie-1",
       name: "My Pie",
       slug: "my-pie",
-      repoPath: null,
       createdAt: "2026-02-20T00:00:00.000Z"
     };
     const slices = [
@@ -16,8 +15,6 @@ describe("pieHandlers", () => {
         pieId: "pie-1",
         ordinal: 1,
         host: "my-pie-s1.localtest.me",
-        worktreePath: "/tmp/one",
-        branch: "main",
         status: "running" as const,
         createdAt: "2026-02-20T00:00:00.000Z",
         stoppedAt: null
@@ -27,8 +24,6 @@ describe("pieHandlers", () => {
         pieId: "pie-1",
         ordinal: 2,
         host: "my-pie-s2.localtest.me",
-        worktreePath: "/tmp/two",
-        branch: "main",
         status: "stopped" as const,
         createdAt: "2026-02-20T00:00:00.000Z",
         stoppedAt: "2026-02-20T00:05:00.000Z"

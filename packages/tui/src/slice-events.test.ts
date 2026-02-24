@@ -65,8 +65,6 @@ describe("slice-events", () => {
         pieId: "p1",
         ordinal: 1,
         host: "app-s1.localtest.me",
-        worktreePath: "/tmp/app",
-        branch: "main",
         status: "running",
         createdAt: "2026-02-20T00:00:00.000Z",
         stoppedAt: null,

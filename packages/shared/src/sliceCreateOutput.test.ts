@@ -8,8 +8,6 @@ function buildSlice(resources: CreateSliceResponse["slice"]["resources"]): Creat
     pieId: "p1",
     ordinal: 1,
     host: "my-pie-s1.localtest.me",
-    worktreePath: "/tmp/worktree",
-    branch: "main",
     status: "running",
     createdAt: "2026-02-20T00:00:00.000Z",
     stoppedAt: null,

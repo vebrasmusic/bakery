@@ -25,6 +25,7 @@ export interface SlicePaneRow {
   rowType: "pie" | "slice";
   id: string;
   pieId: string;
+  depth: number;
   label: string;
   status?: SliceStatus;
 }
@@ -126,17 +127,18 @@ export function buildSlicePaneRows(data: {
       rowType: "pie",
       id: pie.id,
       pieId: pie.id,
-      label: `\uD83E\uDD67 ${pie.slug} (${runningCount}/${pieSlices.length} running)`
+      depth: 0,
+      label: `${pie.slug} (${runningCount}/${pieSlices.length} running)`
     });
 
     for (const slice of pieSlices) {
-      const resources = slice.resources.map((resource) => `${resource.key}:${resource.allocatedPort}`).join(",");
       rows.push({
         rowType: "slice",
         id: slice.id,
         pieId: pie.id,
+        depth: 1,
         status: slice.status,
-        label: `  ${slice.id} ${slice.status} ${slice.host} ${resources}`
+        label: `${slice.id} ${slice.status}`
       });
     }
   }
@@ -146,16 +148,17 @@ export function buildSlicePaneRows(data: {
       rowType: "pie",
       id: "orphan-group",
       pieId: "orphan-group",
-      label: `\u26A0 orphan slices (${orphanSlices.length})`
+      depth: 0,
+      label: `orphan slices (${orphanSlices.length})`
     });
     for (const slice of orphanSlices) {
-      const resources = slice.resources.map((resource) => `${resource.key}:${resource.allocatedPort}`).join(",");
       rows.push({
         rowType: "slice",
         id: slice.id,
         pieId: slice.pieId,
+        depth: 1,
         status: slice.status,
-        label: `  ${slice.id} ${slice.status} ${slice.host} ${resources}`
+        label: `${slice.id} ${slice.status}`
       });
     }
   }

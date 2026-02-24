@@ -11,8 +11,6 @@ import { StatusBar } from "./components/StatusBar.js";
 import { PieCardList } from "./components/PieCardList.js";
 import { OutputLog, flattenOutputEntries } from "./components/OutputLog.js";
 import type { OutputEntry, OutputLevel } from "./components/OutputLog.js";
-import { CommandInput } from "./components/CommandInput.js";
-import type { PromptFieldInfo } from "./components/CommandInput.js";
 import { FooterHelp } from "./components/FooterHelp.js";
 import { colors } from "./theme.js";
 import { buildSliceSnapshots, detectSliceLifecycleEvents, filterSuppressedSliceEvents } from "./slice-events.js";
@@ -25,17 +23,13 @@ import {
   type MetadataTreeNode
 } from "./slice-metadata-tree.js";
 
-type PromptState =
-  | { kind: "none" }
+type CommandPromptState =
   | { kind: "pie-name" }
-  | { kind: "pie-repo"; name: string }
   | { kind: "pie-rm-confirm"; pieId: string }
   | { kind: "slice-pie" }
-  | { kind: "slice-worktree"; pieId: string }
-  | { kind: "slice-branch"; pieId: string; worktreePath: string }
-  | { kind: "slice-numresources"; pieId: string; worktreePath: string; branch: string };
+  | { kind: "slice-numresources"; pieId: string };
 
-type FocusPane = "slices" | "output" | "command";
+type FocusPane = "slices" | "output";
 
 type RowActionId =
   | "view-slice-metadata"
@@ -54,6 +48,12 @@ interface RowAction {
 
 type ActiveModal =
   | { kind: "none" }
+  | { kind: "create-pie"; name: string }
+  | { kind: "create-slice"; pieId: string; numResources: string }
+  | { kind: "confirm-delete"; target: "pie" | "slice"; id: string }
+  | { kind: "create-options"; pieId?: string; selected: number; options: Array<"create-slice" | "create-pie"> }
+  | { kind: "command-entry"; value: string }
+  | { kind: "command-prompt"; prompt: CommandPromptState; value: string }
   | {
       kind: "row-actions";
       rowType: "pie" | "slice";
@@ -108,7 +108,7 @@ function clamp(value: number, minimum: number, maximum: number): number {
 }
 
 function cyclePane(current: FocusPane, direction: "next" | "previous"): FocusPane {
-  const panes: FocusPane[] = ["slices", "output", "command"];
+  const panes: FocusPane[] = ["slices", "output"];
   const index = panes.indexOf(current);
   const offset = direction === "next" ? 1 : -1;
   return panes[(index + offset + panes.length) % panes.length]!;
@@ -173,6 +173,19 @@ function fitModalLine(line: string, width: number): string {
   return line + " ".repeat(width - chars.length);
 }
 
+function commandPromptLabel(prompt: CommandPromptState): { title: string; defaultValue?: string } {
+  if (prompt.kind === "pie-name") {
+    return { title: "Pie name" };
+  }
+  if (prompt.kind === "pie-rm-confirm") {
+    return { title: `Type yes to delete pie ${prompt.pieId}` };
+  }
+  if (prompt.kind === "slice-pie") {
+    return { title: "Pie (id or slug)" };
+  }
+  return { title: "Num resources", defaultValue: "3" };
+}
+
 export function BakeryApp({ api, daemonUrl }: BakeryAppProps): React.ReactElement {
   const { exit } = useApp();
   const { stdout } = useStdout();
@@ -180,14 +193,14 @@ export function BakeryApp({ api, daemonUrl }: BakeryAppProps): React.ReactElemen
   const [status, setStatus] = useState<StatusResponse | null>(null);
   const [pies, setPies] = useState<ListPiesResponse["pies"]>([]);
   const [slices, setSlices] = useState<ListSlicesResponse["slices"]>([]);
-  const [commandInput, setCommandInput] = useState<string>("");
-  const [prompt, setPrompt] = useState<PromptState>({ kind: "none" });
   const [outputEntries, setOutputEntries] = useState<OutputEntry[]>([]);
-  const [focusPane, setFocusPane] = useState<FocusPane>("command");
+  const [focusPane, setFocusPane] = useState<FocusPane>("slices");
   const [outputScrollOffset, setOutputScrollOffset] = useState<number>(0);
   const [sliceScrollOffset, setSliceScrollOffset] = useState<number>(0);
   const [selectedRowIndex, setSelectedRowIndex] = useState<number>(0);
   const [outputStickToBottom, setOutputStickToBottom] = useState<boolean>(true);
+  const [isOutputExpanded, setIsOutputExpanded] = useState<boolean>(false);
+  const [collapsedPieIds, setCollapsedPieIds] = useState<Set<string>>(new Set());
   const [activeModal, setActiveModal] = useState<ActiveModal>({ kind: "none" });
   const [viewport, setViewport] = useState<{ width: number; height: number }>({
     width: Math.max(stdout.columns ?? 120, 60),
@@ -277,25 +290,62 @@ export function BakeryApp({ api, daemonUrl }: BakeryAppProps): React.ReactElemen
     return () => clearInterval(timer);
   }, [refreshDashboard]);
 
-  const sliceRows: SlicePaneRow[] = useMemo(() => buildSlicePaneRows({ pies, slices }), [pies, slices]);
+  const allSliceRows: SlicePaneRow[] = useMemo(() => buildSlicePaneRows({ pies, slices }), [pies, slices]);
+  const visibleSliceRows: SlicePaneRow[] = useMemo(() => {
+    const rows: SlicePaneRow[] = [];
+    for (const row of allSliceRows) {
+      if (row.rowType === "pie") {
+        rows.push(row);
+        continue;
+      }
+      if (!collapsedPieIds.has(row.pieId)) {
+        rows.push(row);
+      }
+    }
+    return rows;
+  }, [allSliceRows, collapsedPieIds]);
   const outputLines = useMemo(() => flattenOutputEntries(outputEntries), [outputEntries]);
   const statusSummary: StatusSummary | null = buildStatusSummary(status);
 
   const bannerHeight = 10;
   const statusHeight = 5;
-  const commandHeight = 3;
   const footerHeight = 2;
-  const middleHeight = Math.max(6, viewport.height - (bannerHeight + statusHeight + commandHeight + footerHeight));
+  const middleHeight = Math.max(6, viewport.height - (bannerHeight + statusHeight + footerHeight));
   const paneViewportLines = Math.max(1, middleHeight - 3);
   const maxOutputOffset = Math.max(0, outputLines.length - paneViewportLines);
-  const maxSliceOffset = Math.max(0, sliceRows.length - paneViewportLines);
+  const maxSliceOffset = Math.max(0, visibleSliceRows.length - paneViewportLines);
+
+  useEffect(() => {
+    const validPieIds = new Set(allSliceRows.filter((row) => row.rowType === "pie").map((row) => row.id));
+    setCollapsedPieIds((current) => {
+      const next = new Set<string>();
+      for (const id of current) {
+        if (validPieIds.has(id)) {
+          next.add(id);
+        }
+      }
+      if (next.size === current.size) {
+        let unchanged = true;
+        for (const id of next) {
+          if (!current.has(id)) {
+            unchanged = false;
+            break;
+          }
+        }
+        if (unchanged) {
+          return current;
+        }
+      }
+      return next;
+    });
+  }, [allSliceRows]);
 
   useEffect(() => {
     setOutputScrollOffset((current) => (outputStickToBottom ? maxOutputOffset : Math.min(current, maxOutputOffset)));
   }, [maxOutputOffset, outputStickToBottom]);
 
   useEffect(() => {
-    if (sliceRows.length === 0) {
+    if (visibleSliceRows.length === 0) {
       if (selectedRowIndex !== 0) {
         setSelectedRowIndex(0);
       }
@@ -305,7 +355,7 @@ export function BakeryApp({ api, daemonUrl }: BakeryAppProps): React.ReactElemen
       return;
     }
 
-    const clampedIndex = clamp(selectedRowIndex, 0, sliceRows.length - 1);
+    const clampedIndex = clamp(selectedRowIndex, 0, visibleSliceRows.length - 1);
     if (clampedIndex !== selectedRowIndex) {
       setSelectedRowIndex(clampedIndex);
       return;
@@ -315,34 +365,7 @@ export function BakeryApp({ api, daemonUrl }: BakeryAppProps): React.ReactElemen
     if (desiredOffset !== sliceScrollOffset) {
       setSliceScrollOffset(desiredOffset);
     }
-  }, [maxSliceOffset, paneViewportLines, selectedRowIndex, sliceRows.length, sliceScrollOffset]);
-
-  useEffect(() => {
-    if (prompt.kind !== "none") {
-      setFocusPane("command");
-    }
-  }, [prompt.kind]);
-
-  const promptFieldInfo: PromptFieldInfo | null = (() => {
-    switch (prompt.kind) {
-      case "pie-name":
-        return { label: "Pie name:" };
-      case "pie-repo":
-        return { label: "Repo path (optional):", defaultValue: "" };
-      case "pie-rm-confirm":
-        return { label: `Type yes to delete pie ${prompt.pieId}:` };
-      case "slice-pie":
-        return { label: "Pie (id or slug):" };
-      case "slice-worktree":
-        return { label: "Worktree path:", defaultValue: "." };
-      case "slice-branch":
-        return { label: "Branch:", defaultValue: "main" };
-      case "slice-numresources":
-        return { label: "Num resources:", defaultValue: "3" };
-      default:
-        return null;
-    }
-  })();
+  }, [maxSliceOffset, paneViewportLines, selectedRowIndex, sliceScrollOffset, visibleSliceRows.length]);
 
   const openSliceActionModal = useCallback((sliceId: string, selected = 0) => {
     const actions = buildSliceRowActions();
@@ -356,11 +379,11 @@ export function BakeryApp({ api, daemonUrl }: BakeryAppProps): React.ReactElemen
   }, []);
 
   const openRowActionModal = useCallback(() => {
-    if (sliceRows.length === 0) {
+    if (visibleSliceRows.length === 0) {
       return;
     }
 
-    const selected = sliceRows[selectedRowIndex];
+    const selected = visibleSliceRows[selectedRowIndex];
     if (!selected) {
       return;
     }
@@ -385,7 +408,7 @@ export function BakeryApp({ api, daemonUrl }: BakeryAppProps): React.ReactElemen
         { id: "remove-pie", label: "Remove pie", destructive: true }
       ]
     });
-  }, [openSliceActionModal, selectedRowIndex, sliceRows]);
+  }, [openSliceActionModal, selectedRowIndex, visibleSliceRows]);
 
   const openSliceMetadataModal = useCallback(
     (sliceId: string) => {
@@ -466,8 +489,7 @@ export function BakeryApp({ api, daemonUrl }: BakeryAppProps): React.ReactElemen
           }
 
           if (actionId === "create-slice") {
-            setPrompt({ kind: "slice-worktree", pieId: id });
-            setFocusPane("command");
+            setActiveModal({ kind: "create-slice", pieId: id, numResources: "" });
             addOutput(`Creating slice for pie ${id}`, "info");
             return;
           }
@@ -487,123 +509,59 @@ export function BakeryApp({ api, daemonUrl }: BakeryAppProps): React.ReactElemen
     [addOutput, api, markLocalSuppression, openSliceMetadataModal, refreshDashboard, slices]
   );
 
-  const handlePromptSubmit = useCallback(
-    async (value: string) => {
-      const trimmed = value.trim();
+  const submitSliceCreateModal = useCallback(
+    async (pieId: string, rawCount: string) => {
+      const trimmed = rawCount.trim();
+      const numResources = Number.parseInt(trimmed || "3", 10);
+      if (!Number.isInteger(numResources) || numResources < 1) {
+        addOutput("Must be a positive integer.", "error");
+        setActiveModal({ kind: "none" });
+        return;
+      }
 
-      switch (prompt.kind) {
-        case "pie-name": {
-          if (!trimmed) {
-            addOutput("Pie create cancelled: name is required.", "error");
-            setPrompt({ kind: "none" });
-            break;
-          }
-          setPrompt({ kind: "pie-repo", name: trimmed });
-          break;
-        }
-        case "pie-repo": {
-          try {
-            const repoPath = trimmed || undefined;
-            const created = await api.createPie({ name: prompt.name, repoPath });
-            addOutput(`Created pie ${created.pie.slug} (${created.pie.id})`, "success");
-            void refreshDashboard();
-          } catch (createError: unknown) {
-            const errorMessage = createError instanceof Error ? createError.message : "Unknown error";
-            addOutput(`Error: ${errorMessage}`, "error");
-          }
-          setPrompt({ kind: "none" });
-          break;
-        }
-        case "pie-rm-confirm": {
-          if (trimmed.toLowerCase() !== "yes") {
-            addOutput("Pie rm cancelled.", "info");
-            setPrompt({ kind: "none" });
-            break;
-          }
-          try {
-            await api.removePie(prompt.pieId);
-            addOutput(`Removed pie ${prompt.pieId}`, "success");
-            void refreshDashboard();
-          } catch (removeError: unknown) {
-            const errorMessage = removeError instanceof Error ? removeError.message : "Unknown error";
-            addOutput(`Error: ${errorMessage}`, "error");
-          }
-          setPrompt({ kind: "none" });
-          break;
-        }
-        case "slice-pie": {
-          if (!trimmed) {
-            addOutput("Slice create cancelled: pie is required.", "error");
-            setPrompt({ kind: "none" });
-            break;
-          }
-          setPrompt({ kind: "slice-worktree", pieId: trimmed });
-          break;
-        }
-        case "slice-worktree": {
-          const worktreePath = trimmed || ".";
-          setPrompt({ kind: "slice-branch", pieId: prompt.pieId, worktreePath });
-          break;
-        }
-        case "slice-branch": {
-          const branch = trimmed || "main";
-          setPrompt({
-            kind: "slice-numresources",
-            pieId: prompt.pieId,
-            worktreePath: prompt.worktreePath,
-            branch
-          });
-          break;
-        }
-        case "slice-numresources": {
-          const numResources = Number.parseInt(trimmed || "3", 10);
-          if (!Number.isInteger(numResources) || numResources < 1) {
-            addOutput("Must be a positive integer.", "error");
-            setPrompt({ kind: "none" });
-            break;
-          }
-          try {
-            const created = await api.createSlice({
-              pieId: prompt.pieId,
-              worktreePath: prompt.worktreePath,
-              branch: prompt.branch,
-              resources: buildDefaultResources(numResources)
-            });
-            const output = toSliceCreateOutput(created.slice);
-            markLocalSuppression("created", output.id);
-            addOutput(`Created slice ${output.id} (${output.host})`, "success");
-            addOutput(JSON.stringify(output, null, 2), "info");
-            void refreshDashboard();
-          } catch (createError: unknown) {
-            const errorMessage = createError instanceof Error ? createError.message : "Unknown error";
-            addOutput(`Error: ${errorMessage}`, "error");
-          }
-          setPrompt({ kind: "none" });
-          break;
-        }
-        default:
-          break;
+      try {
+        const created = await api.createSlice({
+          pieId,
+          resources: buildDefaultResources(numResources)
+        });
+        const output = toSliceCreateOutput(created.slice);
+        markLocalSuppression("created", output.id);
+        addOutput(`Created slice ${output.id} (${output.host})`, "success");
+        addOutput(JSON.stringify(output, null, 2), "info");
+        setActiveModal({ kind: "none" });
+        void refreshDashboard();
+      } catch (createError: unknown) {
+        const errorMessage = createError instanceof Error ? createError.message : "Unknown error";
+        addOutput(`Error: ${errorMessage}`, "error");
+        setActiveModal({ kind: "none" });
       }
     },
-    [prompt, api, addOutput, refreshDashboard, markLocalSuppression]
+    [addOutput, api, markLocalSuppression, refreshDashboard]
   );
 
-  const handleCommandSubmit = useCallback(
-    async (input: string) => {
-      const parsed = parseCommand(input);
+  const submitCreatePieModal = useCallback(
+    async (name: string) => {
+      const trimmed = name.trim();
+      if (!trimmed) {
+        addOutput("Pie create cancelled: name is required.", "error");
+        return;
+      }
 
-      if (parsed.kind === "pie-create-prompt") {
-        setPrompt({ kind: "pie-name" });
-        return;
+      try {
+        const created = await api.createPie({ name: trimmed });
+        addOutput(`Created pie ${created.pie.slug} (${created.pie.id})`, "success");
+        setActiveModal({ kind: "none" });
+        void refreshDashboard();
+      } catch (error: unknown) {
+        const errorMessage = error instanceof Error ? error.message : "Unknown error";
+        addOutput(`Error: ${errorMessage}`, "error");
       }
-      if (parsed.kind === "slice-create-prompt") {
-        setPrompt({ kind: "slice-pie" });
-        return;
-      }
-      if (parsed.kind === "pie-rm") {
-        setPrompt({ kind: "pie-rm-confirm", pieId: parsed.id });
-        return;
-      }
+    },
+    [addOutput, api, refreshDashboard]
+  );
+
+  const executeDirectCommand = useCallback(
+    async (parsed: ReturnType<typeof parseCommand>) => {
       if (parsed.kind === "quit") {
         addOutput("Goodbye.", "info");
         exit();
@@ -635,6 +593,93 @@ export function BakeryApp({ api, daemonUrl }: BakeryAppProps): React.ReactElemen
       }
     },
     [api, addOutput, exit, markLocalSuppression, refreshDashboard]
+  );
+
+  const submitCommandPrompt = useCallback(
+    async (promptState: CommandPromptState, value: string) => {
+      const trimmed = value.trim();
+
+      if (promptState.kind === "pie-name") {
+        if (!trimmed) {
+          addOutput("Pie create cancelled: name is required.", "error");
+          setActiveModal({ kind: "none" });
+          return;
+        }
+        await submitCreatePieModal(trimmed);
+        return;
+      }
+
+      if (promptState.kind === "pie-rm-confirm") {
+        if (trimmed.toLowerCase() !== "yes") {
+          addOutput("Pie rm cancelled.", "info");
+          setActiveModal({ kind: "none" });
+          return;
+        }
+        try {
+          await api.removePie(promptState.pieId);
+          addOutput(`Removed pie ${promptState.pieId}`, "success");
+          setActiveModal({ kind: "none" });
+          void refreshDashboard();
+        } catch (error: unknown) {
+          const errorMessage = error instanceof Error ? error.message : "Unknown error";
+          addOutput(`Error: ${errorMessage}`, "error");
+          setActiveModal({ kind: "none" });
+        }
+        return;
+      }
+
+      if (promptState.kind === "slice-pie") {
+        if (!trimmed) {
+          addOutput("Slice create cancelled: pie is required.", "error");
+          setActiveModal({ kind: "none" });
+          return;
+        }
+        setActiveModal({
+          kind: "command-prompt",
+          prompt: { kind: "slice-numresources", pieId: trimmed },
+          value: ""
+        });
+        return;
+      }
+
+      await submitSliceCreateModal(promptState.pieId, trimmed);
+    },
+    [addOutput, api, refreshDashboard, submitCreatePieModal, submitSliceCreateModal]
+  );
+
+  const openCreateOptionsModal = useCallback((pieId?: string) => {
+    const options: Array<"create-slice" | "create-pie"> = pieId ? ["create-slice", "create-pie"] : ["create-pie"];
+    setActiveModal({
+      kind: "create-options",
+      selected: 0,
+      options,
+      ...(pieId ? { pieId } : {})
+    });
+  }, []);
+
+  const confirmDelete = useCallback(
+    async (target: "pie" | "slice", id: string) => {
+      try {
+        if (target === "slice") {
+          await api.removeSlice(id);
+          markLocalSuppression("removed", id);
+          addOutput(`Removed slice ${id}`, "success");
+          setActiveModal({ kind: "none" });
+          void refreshDashboard();
+          return;
+        }
+
+        await api.removePie(id);
+        addOutput(`Removed pie ${id}`, "success");
+        setActiveModal({ kind: "none" });
+        void refreshDashboard();
+      } catch (error: unknown) {
+        const errorMessage = error instanceof Error ? error.message : "Unknown error";
+        addOutput(`Error: ${errorMessage}`, "error");
+        setActiveModal({ kind: "none" });
+      }
+    },
+    [addOutput, api, markLocalSuppression, refreshDashboard]
   );
 
   const scrollOutput = useCallback(
@@ -669,6 +714,15 @@ export function BakeryApp({ api, daemonUrl }: BakeryAppProps): React.ReactElemen
   const rowActionLineCount =
     activeModal.kind === "row-actions" ? (activeModal.confirmActionId ? 1 : activeModal.actions.length) : 0;
   const rowActionsModalHeight = Math.max(4, Math.min(maxModalHeight, rowActionLineCount + 3));
+  const createPieModalWidth = Math.min(maxModalWidth, Math.max(44, Math.floor(viewport.width * 0.6)));
+  const createPieModalHeight = 6;
+  const createSliceModalWidth = createPieModalWidth;
+  const createSliceModalHeight = 6;
+  const createOptionsModalWidth = Math.min(maxModalWidth, Math.max(36, Math.floor(viewport.width * 0.45)));
+  const createOptionsModalHeight =
+    activeModal.kind === "create-options" ? Math.max(5, Math.min(maxModalHeight, activeModal.options.length + 3)) : 5;
+  const commandModalWidth = Math.min(maxModalWidth, Math.max(56, Math.floor(viewport.width * 0.7)));
+  const commandModalHeight = 6;
 
   useInput((input, key) => {
     if (key.ctrl && input === "c") {
@@ -743,6 +797,200 @@ export function BakeryApp({ api, daemonUrl }: BakeryAppProps): React.ReactElemen
           }
           void executeRowAction(action.id, activeModal.rowType, activeModal.id);
           setActiveModal({ kind: "none" });
+        }
+        return;
+      }
+
+      if (activeModal.kind === "create-options") {
+        if (key.escape) {
+          setActiveModal({ kind: "none" });
+          return;
+        }
+
+        if (key.upArrow || input === "k") {
+          setActiveModal({
+            ...activeModal,
+            selected: clamp(activeModal.selected - 1, 0, activeModal.options.length - 1)
+          });
+          return;
+        }
+
+        if (key.downArrow || input === "j") {
+          setActiveModal({
+            ...activeModal,
+            selected: clamp(activeModal.selected + 1, 0, activeModal.options.length - 1)
+          });
+          return;
+        }
+
+        if (key.return) {
+          const selectedOption = activeModal.options[activeModal.selected];
+          if (selectedOption === "create-pie") {
+            setActiveModal({ kind: "create-pie", name: "" });
+            return;
+          }
+          if (selectedOption === "create-slice" && activeModal.pieId) {
+            setActiveModal({ kind: "create-slice", pieId: activeModal.pieId, numResources: "" });
+            return;
+          }
+          setActiveModal({ kind: "none" });
+        }
+        return;
+      }
+
+      if (activeModal.kind === "confirm-delete") {
+        if (key.escape || input.toLowerCase() === "n" || key.return) {
+          setActiveModal({ kind: "none" });
+          return;
+        }
+        if (input.toLowerCase() === "y") {
+          void confirmDelete(activeModal.target, activeModal.id);
+        }
+        return;
+      }
+
+      if (activeModal.kind === "create-pie") {
+        if (key.escape) {
+          setActiveModal({ kind: "none" });
+          return;
+        }
+
+        if (key.return) {
+          void submitCreatePieModal(activeModal.name);
+          return;
+        }
+
+        if (key.backspace || key.delete) {
+          setActiveModal((current) =>
+            current.kind === "create-pie"
+              ? { ...current, name: current.name.slice(0, -1) }
+              : current
+          );
+          return;
+        }
+
+        if (!key.ctrl && !key.meta && input.length === 1) {
+          setActiveModal((current) =>
+            current.kind === "create-pie"
+              ? { ...current, name: current.name + input }
+              : current
+          );
+        }
+        return;
+      }
+
+      if (activeModal.kind === "create-slice") {
+        if (key.escape) {
+          setActiveModal({ kind: "none" });
+          return;
+        }
+
+        if (key.return) {
+          void submitSliceCreateModal(activeModal.pieId, activeModal.numResources);
+          return;
+        }
+
+        if (key.backspace || key.delete) {
+          setActiveModal((current) =>
+            current.kind === "create-slice"
+              ? { ...current, numResources: current.numResources.slice(0, -1) }
+              : current
+          );
+          return;
+        }
+
+        if (!key.ctrl && !key.meta && input.length === 1) {
+          setActiveModal((current) =>
+            current.kind === "create-slice"
+              ? { ...current, numResources: current.numResources + input }
+              : current
+          );
+        }
+        return;
+      }
+
+      if (activeModal.kind === "command-entry") {
+        if (key.escape) {
+          setActiveModal({ kind: "none" });
+          return;
+        }
+
+        if (key.return) {
+          const parsed = parseCommand(activeModal.value);
+          if (parsed.kind === "pie-create-prompt") {
+            setActiveModal({
+              kind: "command-prompt",
+              prompt: { kind: "pie-name" },
+              value: ""
+            });
+            return;
+          }
+          if (parsed.kind === "slice-create-prompt") {
+            setActiveModal({
+              kind: "command-prompt",
+              prompt: { kind: "slice-pie" },
+              value: ""
+            });
+            return;
+          }
+          if (parsed.kind === "pie-rm") {
+            setActiveModal({
+              kind: "command-prompt",
+              prompt: { kind: "pie-rm-confirm", pieId: parsed.id },
+              value: ""
+            });
+            return;
+          }
+          setActiveModal({ kind: "none" });
+          void executeDirectCommand(parsed);
+          return;
+        }
+
+        if (key.backspace || key.delete) {
+          setActiveModal((current) =>
+            current.kind === "command-entry"
+              ? { ...current, value: current.value.slice(0, -1) }
+              : current
+          );
+          return;
+        }
+
+        if (!key.ctrl && !key.meta && input.length === 1) {
+          setActiveModal((current) =>
+            current.kind === "command-entry"
+              ? { ...current, value: current.value + input }
+              : current
+          );
+        }
+        return;
+      }
+
+      if (activeModal.kind === "command-prompt") {
+        if (key.escape) {
+          setActiveModal({ kind: "none" });
+          return;
+        }
+
+        if (key.return) {
+          void submitCommandPrompt(activeModal.prompt, activeModal.value);
+          return;
+        }
+
+        if (key.backspace || key.delete) {
+          setActiveModal((current) =>
+            current.kind === "command-prompt"
+              ? { ...current, value: current.value.slice(0, -1) }
+              : current
+          );
+          return;
+        }
+
+        if (!key.ctrl && !key.meta && input.length === 1) {
+          setActiveModal((current) =>
+            current.kind === "command-prompt"
+              ? { ...current, value: current.value + input }
+              : current
+          );
         }
         return;
       }
@@ -861,51 +1109,86 @@ export function BakeryApp({ api, daemonUrl }: BakeryAppProps): React.ReactElemen
       return;
     }
 
+    if (!key.ctrl && !key.meta && (input === "/" || input === "?")) {
+      setActiveModal({ kind: "command-entry", value: "" });
+      return;
+    }
+
     if (key.tab) {
+      if (isOutputExpanded) {
+        setIsOutputExpanded(false);
+      }
       setFocusPane((current) => cyclePane(current, key.shift ? "previous" : "next"));
       return;
     }
 
-    if (prompt.kind === "none" && focusPane !== "command" && input === "h") {
-      setFocusPane((current) => cyclePane(current, "previous"));
-      return;
-    }
-
-    if (prompt.kind === "none" && focusPane !== "command" && input === "l") {
-      setFocusPane((current) => cyclePane(current, "next"));
-      return;
-    }
-
     if (key.escape) {
-      if (prompt.kind !== "none") {
-        setPrompt({ kind: "none" });
-        setCommandInput("");
-        addOutput("Cancelled.", "info");
+      if (isOutputExpanded) {
+        setIsOutputExpanded(false);
       }
       return;
     }
 
-    if (focusPane === "slices" && prompt.kind === "none") {
-      if ((key.upArrow || input === "k") && sliceRows.length > 0) {
-        const nextIndex = clamp(selectedRowIndex - 1, 0, sliceRows.length - 1);
+    if (focusPane === "slices") {
+      const selectedRow = visibleSliceRows[selectedRowIndex];
+
+      if (!key.ctrl && !key.meta && !key.shift && input === "c") {
+        if (pies.length === 0) {
+          setActiveModal({ kind: "create-pie", name: "" });
+          return;
+        }
+        if (!selectedRow) {
+          openCreateOptionsModal(undefined);
+          return;
+        }
+        if (selectedRow.rowType === "slice") {
+          openCreateOptionsModal(selectedRow.pieId);
+          return;
+        }
+        if (selectedRow.id === "orphan-group") {
+          openCreateOptionsModal(undefined);
+          return;
+        }
+        openCreateOptionsModal(selectedRow.id);
+        return;
+      }
+
+      if (!key.ctrl && !key.meta && !key.shift && input === "d") {
+        if (!selectedRow) {
+          return;
+        }
+        if (selectedRow.rowType === "slice") {
+          setActiveModal({ kind: "confirm-delete", target: "slice", id: selectedRow.id });
+          return;
+        }
+        if (selectedRow.id === "orphan-group") {
+          addOutput("Cannot delete orphan group row.", "error");
+          return;
+        }
+        setActiveModal({ kind: "confirm-delete", target: "pie", id: selectedRow.id });
+        return;
+      }
+
+      if ((key.upArrow || input === "k") && visibleSliceRows.length > 0) {
+        const nextIndex = clamp(selectedRowIndex - 1, 0, visibleSliceRows.length - 1);
         setSelectedRowIndex(nextIndex);
         setSliceScrollOffset((current) => clamp(ensureVisible(nextIndex, current, paneViewportLines), 0, maxSliceOffset));
         return;
       }
-      if ((key.downArrow || input === "j") && sliceRows.length > 0) {
-        const nextIndex = clamp(selectedRowIndex + 1, 0, sliceRows.length - 1);
+      if ((key.downArrow || input === "j") && visibleSliceRows.length > 0) {
+        const nextIndex = clamp(selectedRowIndex + 1, 0, visibleSliceRows.length - 1);
         setSelectedRowIndex(nextIndex);
         setSliceScrollOffset((current) => clamp(ensureVisible(nextIndex, current, paneViewportLines), 0, maxSliceOffset));
         return;
       }
       if (key.pageUp) {
-        const nextIndex = clamp(selectedRowIndex - paneViewportLines, 0, Math.max(0, sliceRows.length - 1));
+        const nextIndex = clamp(selectedRowIndex - paneViewportLines, 0, Math.max(0, visibleSliceRows.length - 1));
         setSelectedRowIndex(nextIndex);
         setSliceScrollOffset((current) => clamp(ensureVisible(nextIndex, current, paneViewportLines), 0, maxSliceOffset));
         return;
       }
       if (key.pageDown) {
-        const nextIndex = clamp(selectedRowIndex + paneViewportLines, 0, Math.max(0, sliceRows.length - 1));
+        const nextIndex = clamp(selectedRowIndex + paneViewportLines, 0, Math.max(0, visibleSliceRows.length - 1));
         setSelectedRowIndex(nextIndex);
         setSliceScrollOffset((current) => clamp(ensureVisible(nextIndex, current, paneViewportLines), 0, maxSliceOffset));
         return;
@@ -916,9 +1199,31 @@ export function BakeryApp({ api, daemonUrl }: BakeryAppProps): React.ReactElemen
         return;
       }
       if (key.end || (input === "G" && key.shift)) {
-        const lastIndex = Math.max(0, sliceRows.length - 1);
+        const lastIndex = Math.max(0, visibleSliceRows.length - 1);
         setSelectedRowIndex(lastIndex);
-        setSliceScrollOffset(Math.max(0, sliceRows.length - paneViewportLines));
+        setSliceScrollOffset(Math.max(0, visibleSliceRows.length - paneViewportLines));
+        return;
+      }
+      if ((key.leftArrow || input === "h") && selectedRow?.rowType === "pie") {
+        setCollapsedPieIds((current) => {
+          if (current.has(selectedRow.id)) {
+            return current;
+          }
+          const next = new Set(current);
+          next.add(selectedRow.id);
+          return next;
+        });
+        return;
+      }
+      if ((key.rightArrow || input === "l") && selectedRow?.rowType === "pie") {
+        setCollapsedPieIds((current) => {
+          if (!current.has(selectedRow.id)) {
+            return current;
+          }
+          const next = new Set(current);
+          next.delete(selectedRow.id);
+          return next;
+        });
         return;
       }
       if (key.return) {
@@ -927,7 +1232,15 @@ export function BakeryApp({ api, daemonUrl }: BakeryAppProps): React.ReactElemen
       return;
     }
 
-    if (focusPane === "output" && prompt.kind === "none") {
+    if (focusPane === "output") {
+      if (key.return && !isOutputExpanded) {
+        setIsOutputExpanded(true);
+        return;
+      }
+      if (input === "h" && !key.ctrl && !key.meta) {
+        setFocusPane("slices");
+        return;
+      }
       if (key.upArrow || input === "k") {
         scrollOutput(outputScrollOffset - 1);
         return;
@@ -953,29 +1266,12 @@ export function BakeryApp({ api, daemonUrl }: BakeryAppProps): React.ReactElemen
       }
       return;
     }
-
-    if (key.return) {
-      const currentValue = commandInput;
-      setCommandInput("");
-      if (prompt.kind !== "none") {
-        void handlePromptSubmit(currentValue);
-      } else {
-        void handleCommandSubmit(currentValue);
-      }
-      return;
-    }
-
-    if (key.backspace || key.delete) {
-      setCommandInput((previous) => previous.slice(0, -1));
-      return;
-    }
-
-    if (!key.ctrl && !key.meta && input.length === 1) {
-      setCommandInput((previous) => previous + input);
-    }
   });
 
-  const leftPaneWidth = Math.max(30, Math.floor(viewport.width * 0.58));
+  const outputPaneWidth = Math.min(
+    Math.max(44, Math.floor(viewport.width * 0.38)),
+    Math.max(32, viewport.width - 24)
+  );
 
   return (
     <Box width={viewport.width} height={viewport.height} flexDirection="column" overflow="hidden">
@@ -986,17 +1282,26 @@ export function BakeryApp({ api, daemonUrl }: BakeryAppProps): React.ReactElemen
         <StatusBar summary={statusSummary} />
       </Box>
 
-      <Box height={middleHeight} flexDirection="row" gap={1} overflow="hidden" flexShrink={0}>
-        <Box width={leftPaneWidth} overflow="hidden">
-          <PieCardList
-            rows={sliceRows}
-            focused={focusPane === "slices"}
-            selectedIndex={selectedRowIndex}
-            scrollOffset={sliceScrollOffset}
-            height={middleHeight}
-          />
-        </Box>
-        <Box flexGrow={1} overflow="hidden">
+      <Box height={middleHeight} flexDirection="row" gap={isOutputExpanded ? 0 : 1} overflow="hidden" flexShrink={0}>
+        {!isOutputExpanded && (
+          <Box flexGrow={1} flexBasis={0} overflow="hidden">
+            <PieCardList
+              rows={visibleSliceRows}
+              focused={focusPane === "slices"}
+              selectedIndex={selectedRowIndex}
+              scrollOffset={sliceScrollOffset}
+              height={middleHeight}
+              collapsedPieIds={collapsedPieIds}
+            />
+          </Box>
+        )}
+        <Box
+          overflow="hidden"
+          flexGrow={isOutputExpanded ? 1 : 0}
+          flexBasis={isOutputExpanded ? 0 : undefined}
+          width={isOutputExpanded ? undefined : outputPaneWidth}
+          minWidth={isOutputExpanded ? undefined : 32}
+        >
           <OutputLog
             entries={outputEntries}
             height={middleHeight}
@@ -1006,9 +1311,6 @@ export function BakeryApp({ api, daemonUrl }: BakeryAppProps): React.ReactElemen
         </Box>
       </Box>
 
-      <Box height={commandHeight} overflow="hidden" flexShrink={0}>
-        <CommandInput value={commandInput} promptField={promptFieldInfo} focused={focusPane === "command"} />
-      </Box>
       <Box height={footerHeight} overflow="hidden" flexShrink={0}>
         <FooterHelp />
       </Box>
@@ -1018,8 +1320,36 @@ export function BakeryApp({ api, daemonUrl }: BakeryAppProps): React.ReactElemen
           position="absolute"
           marginTop={modalMarginTop}
           marginLeft={modalMarginLeft}
-          width={activeModal.kind === "slice-metadata" ? metadataModalWidth : rowActionsModalWidth}
-          height={activeModal.kind === "slice-metadata" ? metadataModalHeight : rowActionsModalHeight}
+          width={
+            activeModal.kind === "slice-metadata"
+              ? metadataModalWidth
+              : activeModal.kind === "create-pie"
+                ? createPieModalWidth
+                : activeModal.kind === "create-slice"
+                  ? createSliceModalWidth
+                  : activeModal.kind === "create-options"
+                    ? createOptionsModalWidth
+                    : activeModal.kind === "confirm-delete"
+                      ? createOptionsModalWidth
+                      : activeModal.kind === "command-entry" || activeModal.kind === "command-prompt"
+                        ? commandModalWidth
+                        : rowActionsModalWidth
+          }
+          height={
+            activeModal.kind === "slice-metadata"
+              ? metadataModalHeight
+              : activeModal.kind === "create-pie"
+                ? createPieModalHeight
+                : activeModal.kind === "create-slice"
+                  ? createSliceModalHeight
+                  : activeModal.kind === "create-options"
+                    ? createOptionsModalHeight
+                    : activeModal.kind === "confirm-delete"
+                      ? 5
+                      : activeModal.kind === "command-entry" || activeModal.kind === "command-prompt"
+                        ? commandModalHeight
+                        : rowActionsModalHeight
+          }
           borderStyle="round"
           borderColor={colors.lemon}
           paddingX={1}
@@ -1060,6 +1390,124 @@ export function BakeryApp({ api, daemonUrl }: BakeryAppProps): React.ReactElemen
                     {Array.from({ length: fillerCount }, (_, index) => (
                       <Text key={`row-action-filler-${index}`}>{fitModalLine("", innerWidth)}</Text>
                     ))}
+                  </>
+                );
+              })()}
+            </>
+          ) : activeModal.kind === "create-options" ? (
+            <>
+              {(() => {
+                const innerWidth = Math.max(1, createOptionsModalWidth - 4);
+                const lines = activeModal.options.map((option, index) => {
+                  const label = option === "create-slice" ? "Create slice" : "Create pie";
+                  return `${index === activeModal.selected ? ">" : " "} ${label}`;
+                });
+                const fillerCount = Math.max(0, createOptionsModalHeight - 3 - lines.length);
+                return (
+                  <>
+                    <Text color={colors.golden} bold>
+                      {fitModalLine("Create options", innerWidth)}
+                    </Text>
+                    {lines.map((line, index) => (
+                      <Text key={`create-option-${index}`} color={index === activeModal.selected ? colors.lemon : colors.cream}>
+                        {fitModalLine(line, innerWidth)}
+                      </Text>
+                    ))}
+                    {Array.from({ length: fillerCount }, (_, index) => (
+                      <Text key={`create-option-filler-${index}`}>{fitModalLine("", innerWidth)}</Text>
+                    ))}
+                  </>
+                );
+              })()}
+            </>
+          ) : activeModal.kind === "confirm-delete" ? (
+            <>
+              {(() => {
+                const innerWidth = Math.max(1, createOptionsModalWidth - 4);
+                const targetLabel = `${activeModal.target} ${activeModal.id}`;
+                return (
+                  <>
+                    <Text color={colors.coral} bold>
+                      {fitModalLine("Confirm delete", innerWidth)}
+                    </Text>
+                    <Text color={colors.cream}>
+                      {fitModalLine(`Delete ${targetLabel}? Press y to confirm, n/Enter/Esc to cancel.`, innerWidth)}
+                    </Text>
+                    <Text>{fitModalLine("", innerWidth)}</Text>
+                  </>
+                );
+              })()}
+            </>
+          ) : activeModal.kind === "create-pie" ? (
+            <>
+              {(() => {
+                const innerWidth = Math.max(1, createPieModalWidth - 4);
+                return (
+                  <>
+                    <Text color={colors.golden} bold>
+                      {fitModalLine("Create pie", innerWidth)}
+                    </Text>
+                    <Text color={colors.dimmed}>
+                      {fitModalLine("Type name and press Enter. Esc to cancel.", innerWidth)}
+                    </Text>
+                    <Text color={colors.cream}>{fitModalLine(`Name: ${activeModal.name}|`, innerWidth)}</Text>
+                    <Text>{fitModalLine("", innerWidth)}</Text>
+                  </>
+                );
+              })()}
+            </>
+          ) : activeModal.kind === "create-slice" ? (
+            <>
+              {(() => {
+                const innerWidth = Math.max(1, createSliceModalWidth - 4);
+                return (
+                  <>
+                    <Text color={colors.golden} bold>
+                      {fitModalLine(`Create slice for pie ${activeModal.pieId}`, innerWidth)}
+                    </Text>
+                    <Text color={colors.dimmed}>
+                      {fitModalLine("Num resources (default 3). Enter to submit, Esc to cancel.", innerWidth)}
+                    </Text>
+                    <Text color={colors.cream}>
+                      {fitModalLine(`Num resources: ${activeModal.numResources}| [3]`, innerWidth)}
+                    </Text>
+                    <Text>{fitModalLine("", innerWidth)}</Text>
+                  </>
+                );
+              })()}
+            </>
+          ) : activeModal.kind === "command-entry" ? (
+            <>
+              {(() => {
+                const innerWidth = Math.max(1, commandModalWidth - 4);
+                return (
+                  <>
+                    <Text color={colors.golden} bold>
+                      {fitModalLine("Command", innerWidth)}
+                    </Text>
+                    <Text color={colors.dimmed}>
+                      {fitModalLine("Type command and press Enter. Esc to close.", innerWidth)}
+                    </Text>
+                    <Text color={colors.cream}>{fitModalLine(`/${activeModal.value}|`, innerWidth)}</Text>
+                    <Text>{fitModalLine("", innerWidth)}</Text>
+                  </>
+                );
+              })()}
+            </>
+          ) : activeModal.kind === "command-prompt" ? (
+            <>
+              {(() => {
+                const innerWidth = Math.max(1, commandModalWidth - 4);
+                const meta = commandPromptLabel(activeModal.prompt);
+                const suffix = meta.defaultValue ? ` [${meta.defaultValue}]` : "";
+                return (
+                  <>
+                    <Text color={colors.golden} bold>
+                      {fitModalLine("Command prompt", innerWidth)}
+                    </Text>
+                    <Text color={colors.dimmed}>{fitModalLine(`${meta.title}${suffix}`, innerWidth)}</Text>
+                    <Text color={colors.cream}>{fitModalLine(`${activeModal.value}|`, innerWidth)}</Text>
+                    <Text>{fitModalLine("", innerWidth)}</Text>
                   </>
                 );
               })()}

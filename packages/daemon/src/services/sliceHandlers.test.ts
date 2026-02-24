@@ -8,8 +8,6 @@ describe("sliceHandlers", () => {
       pieId: "pie-1",
       ordinal: 1,
       host: "my-pie-s1.localtest.me",
-      worktreePath: "/tmp/one",
-      branch: "main",
       status: "running" as const,
       createdAt: "2026-02-20T00:00:00.000Z",
       stoppedAt: null
@@ -18,7 +16,6 @@ describe("sliceHandlers", () => {
       id: "pie-1",
       name: "My Pie",
       slug: "my-pie",
-      repoPath: null,
       createdAt: "2026-02-20T00:00:00.000Z"
     };
 

@@ -1,5 +1,3 @@
-import path from "node:path";
-import os from "node:os";
 import {
   createSlice,
   listSlices,
@@ -18,21 +16,6 @@ export interface SliceCliGlobalOptions {
 export interface SliceListOptions {
   pie?: string;
   all?: boolean;
-}
-
-function expandUserPath(input: string): string {
-  const trimmed = input.trim();
-  if (trimmed === "~") {
-    return os.homedir();
-  }
-  if (trimmed.startsWith("~/")) {
-    return path.join(os.homedir(), trimmed.slice(2));
-  }
-  return trimmed;
-}
-
-function resolveUserPath(input: string): string {
-  return path.resolve(expandUserPath(input));
 }
 
 export function validateSliceListOptions(options: SliceListOptions): void {
@@ -119,8 +102,6 @@ export function buildDefaultResources(numResources: number): CreateSliceResource
 export async function runSliceCreate(
   options: {
     pie: string;
-    worktree?: string;
-    branch?: string;
     numResources: number;
     sliceName?: string;
   },
@@ -134,8 +115,6 @@ export async function runSliceCreate(
   const response = await createSlice(
     {
       pieId: options.pie,
-      worktreePath: resolveUserPath(options.worktree ?? "."),
-      branch: options.branch ?? "main",
       resources: buildDefaultResources(options.numResources)
     },
     clientOptions

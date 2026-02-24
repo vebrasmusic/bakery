@@ -19,7 +19,7 @@ describe("render", () => {
   });
 
   it("renders pie and slice lists", () => {
-    expect(renderPieList([{ id: "p1", name: "App", slug: "app", repoPath: null, createdAt: "2026-02-20T00:00:00.000Z" }])).toContain(
+    expect(renderPieList([{ id: "p1", name: "App", slug: "app", createdAt: "2026-02-20T00:00:00.000Z" }])).toContain(
       "app"
     );
 
@@ -30,8 +30,6 @@ describe("render", () => {
           pieId: "p1",
           ordinal: 1,
           host: "app-s1.localtest.me",
-          worktreePath: "/tmp/app",
-          branch: "main",
           status: "running",
           createdAt: "2026-02-20T00:00:00.000Z",
           stoppedAt: null,

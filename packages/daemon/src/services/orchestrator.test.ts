@@ -8,7 +8,6 @@ const pie: Pie = {
   id: "p1",
   name: "My Pie",
   slug: "my-pie",
-  repoPath: null,
   createdAt: "2026-02-20T00:00:00.000Z"
 };
 
@@ -17,8 +16,6 @@ const baseSlice: Slice = {
   pieId: "p1",
   ordinal: 1,
   host: "my-pie-s1.localtest.me",
-  worktreePath: "/tmp/worktree",
-  branch: "main",
   status: "running",
   createdAt: "2026-02-20T00:00:00.000Z",
   stoppedAt: null
@@ -54,8 +51,6 @@ describe("SliceOrchestrator", () => {
 
     const created = await orchestrator.createSlice({
       pie,
-      worktreePath: "/tmp/worktree",
-      branch: "main",
       resources: [{ key: "r1", protocol: "http", expose: "primary" }]
     });
 
@@ -71,8 +66,6 @@ describe("SliceOrchestrator", () => {
 
     const created = await orchestrator.createSlice({
       pie,
-      worktreePath: "/tmp/worktree",
-      branch: "main",
       resources: [{ key: "r1", protocol: "http", expose: "primary" }]
     });
 

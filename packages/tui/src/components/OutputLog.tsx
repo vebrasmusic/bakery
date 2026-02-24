@@ -52,6 +52,7 @@ export function OutputLog({ entries, height, scrollOffset, focused }: OutputLogP
       paddingX={1}
       flexDirection="column"
       height={Math.max(3, height)}
+      width="100%"
       overflow="hidden"
     >
       <Text color={colors.golden} bold>
