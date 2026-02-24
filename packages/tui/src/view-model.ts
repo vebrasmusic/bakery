@@ -21,6 +21,14 @@ export interface DashboardViewModel {
   orphanSlices: SliceLineView[];
 }
 
+export interface SlicePaneRow {
+  rowType: "pie" | "slice";
+  id: string;
+  pieId: string;
+  label: string;
+  status?: SliceStatus;
+}
+
 export interface StatusSummary {
   daemonHost: string;
   daemonPort: number;
@@ -86,6 +94,73 @@ export function buildDashboardViewModel(data: {
     pieCards,
     orphanSlices: orphanSliceList.map(buildSliceLine),
   };
+}
+
+export function buildSlicePaneRows(data: {
+  pies: PieItem[];
+  slices: SliceItem[];
+}): SlicePaneRow[] {
+  const slicesByPie = new Map<string, SliceItem[]>();
+  const pieIdSet = new Set(data.pies.map((pie) => pie.id));
+  const orphanSlices: SliceItem[] = [];
+
+  for (const slice of data.slices) {
+    if (!pieIdSet.has(slice.pieId)) {
+      orphanSlices.push(slice);
+      continue;
+    }
+    const existing = slicesByPie.get(slice.pieId);
+    if (existing) {
+      existing.push(slice);
+    } else {
+      slicesByPie.set(slice.pieId, [slice]);
+    }
+  }
+
+  const rows: SlicePaneRow[] = [];
+
+  for (const pie of data.pies) {
+    const pieSlices = slicesByPie.get(pie.id) ?? [];
+    const runningCount = pieSlices.filter((slice) => slice.status === "running").length;
+    rows.push({
+      rowType: "pie",
+      id: pie.id,
+      pieId: pie.id,
+      label: `\uD83E\uDD67 ${pie.slug} (${runningCount}/${pieSlices.length} running)`
+    });
+
+    for (const slice of pieSlices) {
+      const resources = slice.resources.map((resource) => `${resource.key}:${resource.allocatedPort}`).join(",");
+      rows.push({
+        rowType: "slice",
+        id: slice.id,
+        pieId: pie.id,
+        status: slice.status,
+        label: `  ${slice.id} ${slice.status} ${slice.host} ${resources}`
+      });
+    }
+  }
+
+  if (orphanSlices.length > 0) {
+    rows.push({
+      rowType: "pie",
+      id: "orphan-group",
+      pieId: "orphan-group",
+      label: `\u26A0 orphan slices (${orphanSlices.length})`
+    });
+    for (const slice of orphanSlices) {
+      const resources = slice.resources.map((resource) => `${resource.key}:${resource.allocatedPort}`).join(",");
+      rows.push({
+        rowType: "slice",
+        id: slice.id,
+        pieId: slice.pieId,
+        status: slice.status,
+        label: `  ${slice.id} ${slice.status} ${slice.host} ${resources}`
+      });
+    }
+  }
+
+  return rows;
 }
 
 export function buildStatusSummary(

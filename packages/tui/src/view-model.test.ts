@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Pie, SliceWithResources, StatusResponse } from "@bakery/shared";
-import { buildDashboardViewModel, buildStatusSummary } from "./view-model.js";
+import { buildDashboardViewModel, buildSlicePaneRows, buildStatusSummary } from "./view-model.js";
 
 const mockPie: Pie = {
   id: "p1",
@@ -92,5 +92,25 @@ describe("buildStatusSummary", () => {
       stopped: 1,
       error: 0,
     });
+  });
+});
+
+describe("buildSlicePaneRows", () => {
+  it("builds pie and slice rows", () => {
+    const rows = buildSlicePaneRows({ pies: [mockPie], slices: [mockSlice] });
+    expect(rows).toHaveLength(2);
+    expect(rows[0]!.rowType).toBe("pie");
+    expect(rows[0]!.label).toContain("my-app");
+    expect(rows[1]!.rowType).toBe("slice");
+    expect(rows[1]!.label).toContain("s1");
+  });
+
+  it("adds orphan group rows when pie is missing", () => {
+    const rows = buildSlicePaneRows({
+      pies: [],
+      slices: [{ ...mockSlice, pieId: "unknown" }]
+    });
+    expect(rows[0]!.label).toContain("orphan slices");
+    expect(rows[1]!.rowType).toBe("slice");
   });
 });

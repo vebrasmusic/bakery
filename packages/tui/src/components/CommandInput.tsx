@@ -10,13 +10,14 @@ export interface PromptFieldInfo {
 export interface CommandInputProps {
   value: string;
   promptField: PromptFieldInfo | null;
+  focused?: boolean;
 }
 
-export function CommandInput({ value, promptField }: CommandInputProps): React.ReactElement {
+export function CommandInput({ value, promptField, focused = false }: CommandInputProps): React.ReactElement {
   const isPromptMode = promptField !== null;
-  const borderColor = isPromptMode ? colors.lemon : colors.peach;
+  const borderColor = isPromptMode || focused ? colors.lemon : colors.peach;
 
-  const promptLabel = isPromptMode ? promptField.label : "\uD83E\uDD67 bakery>";
+  const promptLabel = isPromptMode ? promptField.label : `\uD83E\uDD67 bakery>${focused ? " (focused)" : ""}`;
   const hintText = isPromptMode && promptField.defaultValue
     ? ` [${promptField.defaultValue}]`
     : "";

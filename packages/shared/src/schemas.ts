@@ -106,6 +106,31 @@ export const CreateSliceResponseSchema = z.object({
 });
 export type CreateSliceResponse = z.infer<typeof CreateSliceResponseSchema>;
 
+export const SliceCreateOutputSchema = z.object({
+  id: z.string().min(1),
+  pieId: z.string().min(1),
+  host: z.string().min(1),
+  routerPort: z.number().int().positive(),
+  url: z.string().url().nullable(),
+  allocatedPorts: z.array(z.number().int().positive()).min(1),
+  resources: z.array(SliceResourceSchema).min(1)
+});
+export type SliceCreateOutput = z.infer<typeof SliceCreateOutputSchema>;
+
+export function toSliceCreateOutput(slice: CreateSliceResponse["slice"]): SliceCreateOutput {
+  const primaryHttpResource = slice.resources.find((resource) => resource.protocol === "http" && resource.expose === "primary");
+
+  return SliceCreateOutputSchema.parse({
+    id: slice.id,
+    pieId: slice.pieId,
+    host: slice.host,
+    routerPort: slice.routerPort,
+    url: primaryHttpResource?.routeUrl ?? null,
+    allocatedPorts: slice.resources.map((resource) => resource.allocatedPort),
+    resources: slice.resources
+  });
+}
+
 export const MutationOkResponseSchema = z.object({
   ok: z.literal(true)
 });

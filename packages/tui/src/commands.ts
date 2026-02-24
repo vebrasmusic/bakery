@@ -2,11 +2,13 @@ import path from "node:path";
 import type {
   CreateSliceResource,
   CreatePieRequest,
+  CreateSliceResponse,
   CreateSliceRequest,
   ListPiesResponse,
   ListSlicesResponse,
   StatusResponse
 } from "@bakery/shared";
+import { toSliceCreateOutput } from "@bakery/shared";
 
 export type TuiCommand =
   | { kind: "help" }
@@ -29,7 +31,7 @@ export interface TuiCommandApi {
   createPie: (input: CreatePieRequest) => Promise<{ pie: { id: string; slug: string } }>;
   removePie: (pieId: string) => Promise<void>;
   listSlices: (query: { pieId?: string; all?: boolean }) => Promise<ListSlicesResponse>;
-  createSlice: (input: CreateSliceRequest) => Promise<{ slice: { id: string; host: string; status: string; resources: unknown[] } }>;
+  createSlice: (input: CreateSliceRequest) => Promise<CreateSliceResponse>;
   stopSlice: (sliceId: string) => Promise<void>;
   removeSlice: (sliceId: string) => Promise<void>;
 }
@@ -275,7 +277,11 @@ export async function executeCommand(command: TuiCommand, api: TuiCommandApi): P
         branch: command.branch,
         resources: buildDefaultResources(command.numResources)
       });
-      return { output: `Created slice ${created.slice.id} (${created.slice.host})`, refresh: true };
+      const output = toSliceCreateOutput(created.slice);
+      return {
+        output: `Created slice ${output.id} (${output.host})\n${JSON.stringify(output, null, 2)}`,
+        refresh: true
+      };
     }
 
     if (command.kind === "slice-stop") {

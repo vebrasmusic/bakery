@@ -12,7 +12,9 @@ export interface OutputEntry {
 
 export interface OutputLogProps {
   entries: OutputEntry[];
-  maxLines?: number;
+  height: number;
+  scrollOffset: number;
+  focused: boolean;
 }
 
 const levelColorMap: Record<OutputLevel, string> = {
@@ -21,25 +23,49 @@ const levelColorMap: Record<OutputLevel, string> = {
   error: colors.coral,
 };
 
-export function OutputLog({ entries, maxLines = 8 }: OutputLogProps): React.ReactElement {
-  const visibleEntries = entries.slice(-maxLines);
+export interface OutputLine {
+  level: OutputLevel;
+  text: string;
+}
+
+export function flattenOutputEntries(entries: OutputEntry[]): OutputLine[] {
+  return entries.flatMap((entry) => {
+    const lines = entry.message.split("\n");
+    return lines.map((line, index) => ({
+      level: entry.level,
+      text: index === 0 ? `[${entry.timestamp}] ${line}` : `${" ".repeat(entry.timestamp.length + 3)}${line}`
+    }));
+  });
+}
+
+export function OutputLog({ entries, height, scrollOffset, focused }: OutputLogProps): React.ReactElement {
+  const lines = flattenOutputEntries(entries);
+  const contentHeight = Math.max(1, height - 3);
+  const clampedOffset = Math.max(0, Math.min(scrollOffset, Math.max(0, lines.length - contentHeight)));
+  const visibleLines = lines.slice(clampedOffset, clampedOffset + contentHeight);
+  const borderColor = focused ? colors.lemon : colors.peach;
 
   return (
     <Box
       borderStyle="round"
-      borderColor={colors.peach}
+      borderColor={borderColor}
       paddingX={1}
       flexDirection="column"
+      height={Math.max(3, height)}
+      overflow="hidden"
     >
-      <Text color={colors.golden} bold>{"\uD83D\uDCCB"} Output</Text>
-      {visibleEntries.length === 0 ? (
-        <Text color={colors.dimmed} italic>No output yet.</Text>
+      <Text color={colors.golden} bold>
+        {"\uD83D\uDCCB"} Output {focused ? "(focused)" : ""}
+      </Text>
+      {visibleLines.length === 0 ? (
+        <Text color={colors.dimmed} italic wrap="truncate-end">
+          No output yet.
+        </Text>
       ) : (
-        visibleEntries.map((entry, index) => (
-          <Box key={index} gap={1}>
-            <Text color={colors.dimmed}>[{entry.timestamp}]</Text>
-            <Text color={levelColorMap[entry.level]}>{entry.message}</Text>
-          </Box>
+        visibleLines.map((line, index) => (
+          <Text key={`${clampedOffset}-${index}`} color={levelColorMap[line.level]} wrap="truncate-end">
+            {line.text}
+          </Text>
         ))
       )}
     </Box>

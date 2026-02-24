@@ -307,7 +307,7 @@ slice
         );
 
         if (options.text) {
-          process.stdout.write(`Created slice ${result.id} (${result.host}) status=${result.status}\n`);
+          process.stdout.write(`Created slice ${result.id} (${result.host})\n`);
         } else {
           process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
         }

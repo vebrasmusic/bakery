@@ -57,7 +57,8 @@ pnpm add -D /Users/andresharisaduvvuri/Documents/GitHub/bakery/packages/slice
 ## Runtime Model
 
 - No compose/manifest required for pie/slice creation.
-- `slice create` allocates free ports and returns JSON resource bindings.
+- `slice create` allocates free ports and returns canonical JSON fields for tooling:
+  - `id`, `pieId`, `host`, `routerPort`, `url` (primary route), `allocatedPorts`, `resources`.
 - You run your own runtime scripts using those ports.
 - Daemon provides host routing only.
 - `bakery` (no subcommand) launches the interactive dashboard TUI.

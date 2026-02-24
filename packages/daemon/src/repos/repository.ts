@@ -39,14 +39,13 @@ function toSlice(row: any): Slice {
 
 function toSliceResource(row: any, routerPort: number): SliceResource {
   const routeHost = row.route_host ?? undefined;
-  const showPort = routerPort !== 80 && routerPort !== 443;
 
   return {
     key: row.key,
     protocol: row.protocol,
     expose: row.expose,
     allocatedPort: row.port,
-    ...(routeHost ? { routeHost, routeUrl: `http://${routeHost}${showPort ? `:${routerPort}` : ""}` } : {})
+    ...(routeHost ? { routeHost, routeUrl: `http://${routeHost}:${routerPort}` } : {})
   };
 }
 

@@ -23,8 +23,7 @@ function slugify(value: string): string {
 }
 
 function buildRouteUrl(host: string, routerPort: number): string {
-  const showPort = routerPort !== 80 && routerPort !== 443;
-  return `http://${host}${showPort ? `:${routerPort}` : ""}`;
+  return `http://${host}:${routerPort}`;
 }
 
 export class SliceOrchestrator {

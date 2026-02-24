@@ -17,6 +17,7 @@ import {
 import type { TuiCommandApi } from "./commands.js";
 import { renderPieList, renderSliceList, renderStatusDashboard } from "./render.js";
 import { BakeryApp } from "./app.js";
+import { enterAlternateScreen, exitAlternateScreen } from "./terminal-screen.js";
 
 function parseArgs(argv: string[]): { daemonUrl?: string } {
   const parsed: { daemonUrl?: string } = {};
@@ -77,10 +78,35 @@ async function main(): Promise<void> {
       return;
     }
 
+    let restored = false;
+    const restoreScreen = () => {
+      if (restored) {
+        return;
+      }
+      restored = true;
+      exitAlternateScreen(process.stdout);
+    };
+
+    enterAlternateScreen(process.stdout);
+
+    const onSignal = () => {
+      restoreScreen();
+      process.exit(0);
+    };
+
+    process.once("SIGINT", onSignal);
+    process.once("SIGTERM", onSignal);
+
     const { waitUntilExit } = render(
       <BakeryApp api={api} daemonUrl={daemonUrl} />
     );
-    await waitUntilExit();
+    try {
+      await waitUntilExit();
+    } finally {
+      process.off("SIGINT", onSignal);
+      process.off("SIGTERM", onSignal);
+      restoreScreen();
+    }
   } catch (error) {
     process.stderr.write(
       `Failed to start TUI against ${daemonUrl}: ${toErrorMessage(error)}\n`

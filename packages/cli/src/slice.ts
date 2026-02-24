@@ -5,8 +5,10 @@ import {
   listSlices,
   removeSlice,
   stopSlice,
+  toSliceCreateOutput,
   type CreateSliceResource,
-  type ListSlicesResponse
+  type ListSlicesResponse,
+  type SliceCreateOutput
 } from "@bakery/shared";
 
 export interface SliceCliGlobalOptions {
@@ -123,7 +125,7 @@ export async function runSliceCreate(
     sliceName?: string;
   },
   globals: SliceCliGlobalOptions
-): Promise<ListSlicesResponse["slices"][number] & { pieSlug?: string; routerPort?: number }> {
+): Promise<SliceCreateOutput> {
   const clientOptions: SliceCliGlobalOptions = {};
   if (globals.daemonUrl !== undefined) {
     clientOptions.daemonUrl = globals.daemonUrl;
@@ -139,10 +141,7 @@ export async function runSliceCreate(
     clientOptions
   );
 
-  return {
-    ...response.slice,
-    ...(options.sliceName ? { requestedSliceName: options.sliceName } : {})
-  };
+  return toSliceCreateOutput(response.slice);
 }
 
 export async function runSliceList(
