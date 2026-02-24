@@ -112,6 +112,11 @@ EOF
 
 This pattern lets agent/worktree bootstrap scripts create deterministic env files from Bakery CLI output.
 
+## Limitations
+
+- OAuth flows that require redirect URIs (for example Google) are not working right now because everything is effectively `localhost`. You would need to manually add the generated Bakery URL to your OAuth provider console. Email/password auth works.
+- Only tested with Better Auth so far.
+
 ## Optional next commands
 
 ```bash
