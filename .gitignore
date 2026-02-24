@@ -1,5 +1,6 @@
 .bakery-data/
 .claude/
+.venv/
 
 # Logs
 logs
