@@ -16,6 +16,14 @@ import type { PromptFieldInfo } from "./components/CommandInput.js";
 import { FooterHelp } from "./components/FooterHelp.js";
 import { colors } from "./theme.js";
 import { buildSliceSnapshots, detectSliceLifecycleEvents, filterSuppressedSliceEvents } from "./slice-events.js";
+import {
+  buildMetadataTree,
+  flattenMetadataTree,
+  getLeafCopyPayload,
+  getNodeJsonCopyPayload,
+  getPathCopyPayload,
+  type MetadataTreeNode
+} from "./slice-metadata-tree.js";
 
 type PromptState =
   | { kind: "none" }
@@ -29,7 +37,14 @@ type PromptState =
 
 type FocusPane = "slices" | "output" | "command";
 
-type RowActionId = "copy-slice-url" | "stop-slice" | "remove-slice" | "copy-pie-id" | "create-slice" | "remove-pie";
+type RowActionId =
+  | "view-slice-metadata"
+  | "copy-slice-url"
+  | "stop-slice"
+  | "remove-slice"
+  | "copy-pie-id"
+  | "create-slice"
+  | "remove-pie";
 
 interface RowAction {
   id: RowActionId;
@@ -46,7 +61,24 @@ type ActiveModal =
       actions: RowAction[];
       selected: number;
       confirmActionId?: RowActionId;
+    }
+  | {
+      kind: "slice-metadata";
+      id: string;
+      tree: MetadataTreeNode;
+      selected: number;
+      expanded: Set<string>;
+      scrollOffset: number;
     };
+
+function buildSliceRowActions(): RowAction[] {
+  return [
+    { id: "view-slice-metadata", label: "View metadata" },
+    { id: "copy-slice-url", label: "Copy primary URL" },
+    { id: "stop-slice", label: "Stop slice", destructive: true },
+    { id: "remove-slice", label: "Remove slice", destructive: true }
+  ];
+}
 
 export interface BakeryAppProps {
   api: TuiCommandApi;
@@ -104,6 +136,41 @@ function copyToClipboard(text: string): boolean {
   } catch {
     return false;
   }
+}
+
+function buildSliceMetadataSnapshot(
+  slice: ListSlicesResponse["slices"][number],
+  routerPort: number
+): {
+  id: string;
+  pieId: string;
+  host: string;
+  routerPort: number;
+  url: string | null;
+  allocatedPorts: number[];
+  resources: ListSlicesResponse["slices"][number]["resources"];
+} {
+  const primaryHttpResource = slice.resources.find((resource) => resource.protocol === "http" && resource.expose === "primary");
+  return {
+    id: slice.id,
+    pieId: slice.pieId,
+    host: slice.host,
+    routerPort,
+    url: primaryHttpResource?.routeUrl ?? null,
+    allocatedPorts: slice.resources.map((resource) => resource.allocatedPort),
+    resources: slice.resources
+  };
+}
+
+function fitModalLine(line: string, width: number): string {
+  if (width <= 0) {
+    return "";
+  }
+  const chars = Array.from(line);
+  if (chars.length >= width) {
+    return chars.slice(0, width).join("");
+  }
+  return line + " ".repeat(width - chars.length);
 }
 
 export function BakeryApp({ api, daemonUrl }: BakeryAppProps): React.ReactElement {
@@ -277,6 +344,17 @@ export function BakeryApp({ api, daemonUrl }: BakeryAppProps): React.ReactElemen
     }
   })();
 
+  const openSliceActionModal = useCallback((sliceId: string, selected = 0) => {
+    const actions = buildSliceRowActions();
+    setActiveModal({
+      kind: "row-actions",
+      rowType: "slice",
+      id: sliceId,
+      selected: clamp(selected, 0, actions.length - 1),
+      actions
+    });
+  }, []);
+
   const openRowActionModal = useCallback(() => {
     if (sliceRows.length === 0) {
       return;
@@ -288,17 +366,7 @@ export function BakeryApp({ api, daemonUrl }: BakeryAppProps): React.ReactElemen
     }
 
     if (selected.rowType === "slice") {
-      setActiveModal({
-        kind: "row-actions",
-        rowType: "slice",
-        id: selected.id,
-        selected: 0,
-        actions: [
-          { id: "copy-slice-url", label: "Copy primary URL" },
-          { id: "stop-slice", label: "Stop slice", destructive: true },
-          { id: "remove-slice", label: "Remove slice", destructive: true }
-        ]
-      });
+      openSliceActionModal(selected.id, 0);
       return;
     }
 
@@ -317,7 +385,33 @@ export function BakeryApp({ api, daemonUrl }: BakeryAppProps): React.ReactElemen
         { id: "remove-pie", label: "Remove pie", destructive: true }
       ]
     });
-  }, [selectedRowIndex, sliceRows]);
+  }, [openSliceActionModal, selectedRowIndex, sliceRows]);
+
+  const openSliceMetadataModal = useCallback(
+    (sliceId: string) => {
+      const selectedSlice = slices.find((slice) => slice.id === sliceId);
+      if (!selectedSlice) {
+        addOutput(`Slice ${sliceId} not found.`, "error");
+        return;
+      }
+      if (!status) {
+        addOutput("Unable to open metadata: daemon status is unavailable.", "error");
+        return;
+      }
+
+      const snapshot = buildSliceMetadataSnapshot(selectedSlice, status.daemon.routerPort);
+      const tree = buildMetadataTree(snapshot, "slice");
+      setActiveModal({
+        kind: "slice-metadata",
+        id: sliceId,
+        tree,
+        selected: 0,
+        expanded: new Set([tree.id]),
+        scrollOffset: 0
+      });
+    },
+    [addOutput, slices, status]
+  );
 
   const executeRowAction = useCallback(
     async (actionId: RowActionId, rowType: "pie" | "slice", id: string) => {
@@ -326,6 +420,11 @@ export function BakeryApp({ api, daemonUrl }: BakeryAppProps): React.ReactElemen
           const selectedSlice = slices.find((slice) => slice.id === id);
           if (!selectedSlice) {
             addOutput(`Slice ${id} not found.`, "error");
+            return;
+          }
+
+          if (actionId === "view-slice-metadata") {
+            openSliceMetadataModal(id);
             return;
           }
 
@@ -385,7 +484,7 @@ export function BakeryApp({ api, daemonUrl }: BakeryAppProps): React.ReactElemen
         addOutput(`Error: ${errorMessage}`, "error");
       }
     },
-    [addOutput, api, markLocalSuppression, refreshDashboard, slices]
+    [addOutput, api, markLocalSuppression, openSliceMetadataModal, refreshDashboard, slices]
   );
 
   const handlePromptSubmit = useCallback(
@@ -547,6 +646,30 @@ export function BakeryApp({ api, daemonUrl }: BakeryAppProps): React.ReactElemen
     [maxOutputOffset]
   );
 
+  const metadataRows = useMemo(
+    () => (activeModal.kind === "slice-metadata" ? flattenMetadataTree(activeModal.tree, activeModal.expanded) : []),
+    [activeModal]
+  );
+  const modalMarginTop = Math.max(2, Math.floor(viewport.height / 3));
+  const modalMarginLeft = Math.max(2, Math.floor(viewport.width / 4));
+  const maxModalWidth = Math.max(20, viewport.width - modalMarginLeft - 2);
+  const rowActionsModalWidth = Math.min(maxModalWidth, Math.max(34, Math.floor(viewport.width / 2)));
+  const metadataModalWidth = Math.min(maxModalWidth, Math.max(60, Math.floor(viewport.width * 0.75)));
+  const maxModalHeight = Math.max(8, viewport.height - modalMarginTop - 2);
+  const metadataModalHeight = Math.min(maxModalHeight, Math.max(10, Math.floor(viewport.height * 0.55)));
+  const metadataRowsPerPage = Math.max(1, metadataModalHeight - 4);
+  const metadataMaxOffset = Math.max(0, metadataRows.length - metadataRowsPerPage);
+  const metadataClampedOffset =
+    activeModal.kind === "slice-metadata" ? clamp(activeModal.scrollOffset, 0, metadataMaxOffset) : 0;
+  const metadataSelectedIndex =
+    activeModal.kind === "slice-metadata" && metadataRows.length > 0
+      ? clamp(activeModal.selected, 0, metadataRows.length - 1)
+      : 0;
+  const visibleMetadataRows = metadataRows.slice(metadataClampedOffset, metadataClampedOffset + metadataRowsPerPage);
+  const rowActionLineCount =
+    activeModal.kind === "row-actions" ? (activeModal.confirmActionId ? 1 : activeModal.actions.length) : 0;
+  const rowActionsModalHeight = Math.max(4, Math.min(maxModalHeight, rowActionLineCount + 3));
+
   useInput((input, key) => {
     if (key.ctrl && input === "c") {
       exit();
@@ -554,67 +677,186 @@ export function BakeryApp({ api, daemonUrl }: BakeryAppProps): React.ReactElemen
     }
 
     if (activeModal.kind !== "none") {
-      if (key.escape) {
-        if (activeModal.confirmActionId !== undefined) {
-          setActiveModal({
-            kind: "row-actions",
-            rowType: activeModal.rowType,
-            id: activeModal.id,
-            actions: activeModal.actions,
-            selected: activeModal.selected
-          });
-          return;
-        }
-        setActiveModal({ kind: "none" });
-        return;
-      }
-
-      if (activeModal.confirmActionId !== undefined) {
-        if (input.toLowerCase() === "y") {
-          const selectedAction = activeModal.actions.find((action) => action.id === activeModal.confirmActionId);
-          if (selectedAction) {
-            void executeRowAction(selectedAction.id, activeModal.rowType, activeModal.id);
+      if (activeModal.kind === "row-actions") {
+        if (key.escape) {
+          if (activeModal.confirmActionId !== undefined) {
+            setActiveModal({
+              kind: "row-actions",
+              rowType: activeModal.rowType,
+              id: activeModal.id,
+              actions: activeModal.actions,
+              selected: activeModal.selected
+            });
+            return;
           }
           setActiveModal({ kind: "none" });
           return;
         }
-        if (input.toLowerCase() === "n" || key.return) {
+
+        if (activeModal.confirmActionId !== undefined) {
+          if (input.toLowerCase() === "y") {
+            const selectedAction = activeModal.actions.find((action) => action.id === activeModal.confirmActionId);
+            if (selectedAction) {
+              void executeRowAction(selectedAction.id, activeModal.rowType, activeModal.id);
+            }
+            setActiveModal({ kind: "none" });
+            return;
+          }
+          if (input.toLowerCase() === "n" || key.return) {
+            setActiveModal({
+              kind: "row-actions",
+              rowType: activeModal.rowType,
+              id: activeModal.id,
+              actions: activeModal.actions,
+              selected: activeModal.selected
+            });
+          }
+          return;
+        }
+
+        if (key.upArrow || input === "k") {
           setActiveModal({
-            kind: "row-actions",
-            rowType: activeModal.rowType,
-            id: activeModal.id,
-            actions: activeModal.actions,
-            selected: activeModal.selected
+            ...activeModal,
+            selected: clamp(activeModal.selected - 1, 0, activeModal.actions.length - 1)
           });
+          return;
+        }
+        if (key.downArrow || input === "j") {
+          setActiveModal({
+            ...activeModal,
+            selected: clamp(activeModal.selected + 1, 0, activeModal.actions.length - 1)
+          });
+          return;
+        }
+        if (key.return) {
+          const action = activeModal.actions[activeModal.selected];
+          if (!action) {
+            return;
+          }
+          if (action.destructive) {
+            setActiveModal({ ...activeModal, confirmActionId: action.id });
+            return;
+          }
+          if (action.id === "view-slice-metadata" && activeModal.rowType === "slice") {
+            openSliceMetadataModal(activeModal.id);
+            return;
+          }
+          void executeRowAction(action.id, activeModal.rowType, activeModal.id);
+          setActiveModal({ kind: "none" });
         }
         return;
       }
 
-      if (key.upArrow || input === "k") {
-        setActiveModal({
-          ...activeModal,
-          selected: clamp(activeModal.selected - 1, 0, activeModal.actions.length - 1)
-        });
-        return;
-      }
-      if (key.downArrow || input === "j") {
-        setActiveModal({
-          ...activeModal,
-          selected: clamp(activeModal.selected + 1, 0, activeModal.actions.length - 1)
-        });
-        return;
-      }
-      if (key.return) {
-        const action = activeModal.actions[activeModal.selected];
-        if (!action) {
+      if (activeModal.kind === "slice-metadata") {
+        if (key.escape || key.backspace) {
+          openSliceActionModal(activeModal.id, 0);
           return;
         }
-        if (action.destructive) {
-          setActiveModal({ ...activeModal, confirmActionId: action.id });
+
+        const rows = flattenMetadataTree(activeModal.tree, activeModal.expanded);
+        if (rows.length === 0) {
           return;
         }
-        void executeRowAction(action.id, activeModal.rowType, activeModal.id);
-        setActiveModal({ kind: "none" });
+
+        const rowsPerPage = metadataRowsPerPage;
+        const selectedIndex = clamp(activeModal.selected, 0, rows.length - 1);
+        const maxOffset = Math.max(0, rows.length - rowsPerPage);
+        const selectedRow = rows[selectedIndex];
+        if (!selectedRow) {
+          return;
+        }
+
+        const moveSelection = (nextIndex: number) => {
+          const clamped = clamp(nextIndex, 0, rows.length - 1);
+          setActiveModal({
+            ...activeModal,
+            selected: clamped,
+            scrollOffset: clamp(ensureVisible(clamped, activeModal.scrollOffset, rowsPerPage), 0, maxOffset)
+          });
+        };
+
+        if (key.upArrow || input === "k") {
+          moveSelection(selectedIndex - 1);
+          return;
+        }
+        if (key.downArrow || input === "j") {
+          moveSelection(selectedIndex + 1);
+          return;
+        }
+
+        if (key.leftArrow || input === "h") {
+          if (selectedRow.hasChildren && selectedRow.isExpanded) {
+            const expanded = new Set(activeModal.expanded);
+            expanded.delete(selectedRow.id);
+            const rowsAfter = flattenMetadataTree(activeModal.tree, expanded);
+            const nextMaxOffset = Math.max(0, rowsAfter.length - rowsPerPage);
+            setActiveModal({
+              ...activeModal,
+              expanded,
+              selected: selectedIndex,
+              scrollOffset: clamp(ensureVisible(selectedIndex, activeModal.scrollOffset, rowsPerPage), 0, nextMaxOffset)
+            });
+            return;
+          }
+
+          if (selectedRow.parentId !== null) {
+            const parentIndex = rows.findIndex((row) => row.id === selectedRow.parentId);
+            if (parentIndex >= 0) {
+              moveSelection(parentIndex);
+            }
+          }
+          return;
+        }
+
+        if (key.rightArrow || input === "l") {
+          if (selectedRow.hasChildren && !selectedRow.isExpanded) {
+            const expanded = new Set(activeModal.expanded);
+            expanded.add(selectedRow.id);
+            const rowsAfter = flattenMetadataTree(activeModal.tree, expanded);
+            const nextMaxOffset = Math.max(0, rowsAfter.length - rowsPerPage);
+            setActiveModal({
+              ...activeModal,
+              expanded,
+              selected: selectedIndex,
+              scrollOffset: clamp(ensureVisible(selectedIndex, activeModal.scrollOffset, rowsPerPage), 0, nextMaxOffset)
+            });
+          }
+          return;
+        }
+
+        if (key.return) {
+          const leafPayload = getLeafCopyPayload(selectedRow.node);
+          if (leafPayload === null) {
+            addOutput(`Cannot copy non-leaf value at ${selectedRow.path}. Use C to copy JSON subtree.`, "error");
+            return;
+          }
+          const copied = copyToClipboard(leafPayload);
+          addOutput(
+            copied ? `Copied value (${selectedRow.path}): ${leafPayload}` : `Value (${selectedRow.path}): ${leafPayload}`,
+            copied ? "success" : "info"
+          );
+          return;
+        }
+
+        if (input === "C" || (input === "c" && key.shift)) {
+          const jsonPayload = getNodeJsonCopyPayload(selectedRow.node);
+          const copied = copyToClipboard(jsonPayload);
+          addOutput(
+            copied ? `Copied JSON subtree for ${selectedRow.path}` : `JSON subtree for ${selectedRow.path}:\n${jsonPayload}`,
+            copied ? "success" : "info"
+          );
+          return;
+        }
+
+        if (input === "c") {
+          const pathPayload = getPathCopyPayload(selectedRow.node);
+          const copied = copyToClipboard(pathPayload);
+          addOutput(
+            copied ? `Copied path: ${pathPayload}` : `Path: ${pathPayload}`,
+            copied ? "success" : "info"
+          );
+          return;
+        }
       }
       return;
     }
@@ -771,30 +1013,97 @@ export function BakeryApp({ api, daemonUrl }: BakeryAppProps): React.ReactElemen
         <FooterHelp />
       </Box>
 
-      {activeModal.kind === "row-actions" && (
+      {activeModal.kind !== "none" && (
         <Box
           position="absolute"
-          marginTop={Math.max(2, Math.floor(viewport.height / 3))}
-          marginLeft={Math.max(2, Math.floor(viewport.width / 4))}
-          width={Math.max(34, Math.floor(viewport.width / 2))}
+          marginTop={modalMarginTop}
+          marginLeft={modalMarginLeft}
+          width={activeModal.kind === "slice-metadata" ? metadataModalWidth : rowActionsModalWidth}
+          height={activeModal.kind === "slice-metadata" ? metadataModalHeight : rowActionsModalHeight}
           borderStyle="round"
           borderColor={colors.lemon}
           paddingX={1}
           flexDirection="column"
         >
-          <Text color={colors.golden} bold>
-            Actions: {activeModal.rowType} {activeModal.id}
-          </Text>
-          {activeModal.confirmActionId ? (
-            <Text color={colors.coral} wrap="truncate-end">
-              Confirm destructive action ({activeModal.confirmActionId})? Press `y` to confirm, `n` or Enter to cancel.
-            </Text>
+          {activeModal.kind === "row-actions" ? (
+            <>
+              {(() => {
+                const innerWidth = Math.max(1, rowActionsModalWidth - 4);
+                const actionLines = activeModal.confirmActionId
+                  ? [
+                      `Confirm destructive action (${activeModal.confirmActionId})? Press y to confirm, n or Enter to cancel.`
+                    ]
+                  : activeModal.actions.map(
+                      (action, index) =>
+                        `${index === activeModal.selected ? ">" : " "} ${action.label}${action.destructive ? " (destructive)" : ""}`
+                    );
+                const fillerCount = Math.max(0, rowActionsModalHeight - 3 - actionLines.length);
+                return (
+                  <>
+                    <Text color={colors.golden} bold>
+                      {fitModalLine(`Actions: ${activeModal.rowType} ${activeModal.id}`, innerWidth)}
+                    </Text>
+                    {actionLines.map((line, index) => (
+                      <Text
+                        key={`row-action-line-${index}`}
+                        color={
+                          activeModal.confirmActionId
+                            ? colors.coral
+                            : index === activeModal.selected
+                              ? colors.lemon
+                              : colors.cream
+                        }
+                      >
+                        {fitModalLine(line, innerWidth)}
+                      </Text>
+                    ))}
+                    {Array.from({ length: fillerCount }, (_, index) => (
+                      <Text key={`row-action-filler-${index}`}>{fitModalLine("", innerWidth)}</Text>
+                    ))}
+                  </>
+                );
+              })()}
+            </>
           ) : (
-            activeModal.actions.map((action, index) => (
-              <Text key={action.id} color={index === activeModal.selected ? colors.lemon : colors.cream} wrap="truncate-end">
-                {`${index === activeModal.selected ? ">" : " "} ${action.label}${action.destructive ? " (destructive)" : ""}`}
-              </Text>
-            ))
+            <>
+              {(() => {
+                const innerWidth = Math.max(1, metadataModalWidth - 4);
+                const bodyLines =
+                  visibleMetadataRows.length === 0
+                    ? [{ key: "empty", color: colors.dimmed, line: "No metadata available." }]
+                    : visibleMetadataRows.map((row, index) => {
+                        const absoluteIndex = metadataClampedOffset + index;
+                        const selected = absoluteIndex === metadataSelectedIndex;
+                        return {
+                          key: `${row.id}-${absoluteIndex}`,
+                          color: selected ? colors.lemon : colors.cream,
+                          line: `${selected ? ">" : " "} ${row.label}`
+                        };
+                      });
+                const fillerCount = Math.max(0, metadataRowsPerPage - bodyLines.length);
+                return (
+                  <>
+                    <Text color={colors.golden} bold>
+                      {fitModalLine(`Metadata: slice ${activeModal.id}`, innerWidth)}
+                    </Text>
+                    <Text color={colors.dimmed}>
+                      {fitModalLine(
+                        "j/k or arrows: move · h/l or arrows: collapse/expand · Enter: copy value · c: path · C: JSON · Esc/Backspace: back",
+                        innerWidth
+                      )}
+                    </Text>
+                    {bodyLines.map((entry) => (
+                      <Text key={entry.key} color={entry.color}>
+                        {fitModalLine(entry.line, innerWidth)}
+                      </Text>
+                    ))}
+                    {Array.from({ length: fillerCount }, (_, index) => (
+                      <Text key={`metadata-filler-${index}`}>{fitModalLine("", innerWidth)}</Text>
+                    ))}
+                  </>
+                );
+              })()}
+            </>
           )}
         </Box>
       )}

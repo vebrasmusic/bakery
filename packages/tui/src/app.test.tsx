@@ -101,55 +101,67 @@ function createMockApi(): TuiCommandApi {
 describe("BakeryApp", () => {
   it("keeps frame height bounded as output grows", async () => {
     const mockApi = createMockApi();
-    const { lastFrame, stdin } = render(<BakeryApp api={mockApi} daemonUrl="http://127.0.0.1:47123" />);
+    const { lastFrame, stdin, unmount } = render(<BakeryApp api={mockApi} daemonUrl="http://127.0.0.1:47123" />);
 
-    const initialLines = (lastFrame() ?? "").split("\n").length;
+    try {
+      const initialLines = (lastFrame() ?? "").split("\n").length;
 
-    for (let index = 0; index < 12; index++) {
-      await typeAndSubmit(stdin, `unknown-${index}`);
+      for (let index = 0; index < 12; index++) {
+        await typeAndSubmit(stdin, `unknown-${index}`);
+      }
+
+      const finalLines = (lastFrame() ?? "").split("\n").length;
+      expect(finalLines).toBeLessThanOrEqual(initialLines + 2);
+    } finally {
+      unmount();
     }
-
-    const finalLines = (lastFrame() ?? "").split("\n").length;
-    expect(finalLines).toBeLessThanOrEqual(initialLines + 2);
   });
 
   it("cycles focus with tab and vim pane navigation", async () => {
     const mockApi = createMockApi();
-    const { lastFrame, stdin } = render(<BakeryApp api={mockApi} daemonUrl="http://127.0.0.1:47123" />);
+    const { lastFrame, stdin, unmount } = render(<BakeryApp api={mockApi} daemonUrl="http://127.0.0.1:47123" />);
 
-    expect(lastFrame()).toContain("bakery> (focused)");
+    try {
+      expect(lastFrame()).toContain("bakery> (focused)");
 
-    stdin.write("\t");
-    await waitForFrameContains(lastFrame, "Pies / Slices (focused)");
+      stdin.write("\t");
+      await waitForFrameContains(lastFrame, "Pies / Slices (focused)");
 
-    stdin.write("l");
-    await waitForFrameContains(lastFrame, "Output (focused)");
+      stdin.write("l");
+      await waitForFrameContains(lastFrame, "Output (focused)");
 
-    stdin.write("h");
-    await waitForFrameContains(lastFrame, "Pies / Slices (focused)");
+      stdin.write("h");
+      await waitForFrameContains(lastFrame, "Pies / Slices (focused)");
+    } finally {
+      unmount();
+    }
   });
 
   it("supports output scrolling in focused output pane", async () => {
     const mockApi = createMockApi();
-    const { lastFrame, stdin } = render(<BakeryApp api={mockApi} daemonUrl="http://127.0.0.1:47123" />);
+    const { lastFrame, stdin, unmount } = render(<BakeryApp api={mockApi} daemonUrl="http://127.0.0.1:47123" />);
 
-    for (let index = 0; index < 14; index++) {
-      await typeAndSubmit(stdin, `unknown-${index}`);
+    try {
+      for (let index = 0; index < 14; index++) {
+        await typeAndSubmit(stdin, `unknown-${index}`);
+      }
+
+      await waitForFrameContains(lastFrame, "unknown-12");
+
+      stdin.write("\t");
+      stdin.write("\t");
+      await waitForFrameContains(lastFrame, "Output (focused)");
+
+      stdin.write("g");
+      await waitForFrameContains(lastFrame, "unknown-0");
+    } finally {
+      unmount();
     }
-
-    await waitForFrameContains(lastFrame, "unknown-12");
-
-    stdin.write("\t");
-    stdin.write("\t");
-    await waitForFrameContains(lastFrame, "Output (focused)");
-
-    stdin.write("g");
-    await waitForFrameContains(lastFrame, "unknown-0");
   });
 
   it("opens row action modal and executes selected action", async () => {
     const mockApi = createMockApi();
-    const { lastFrame, stdin } = render(<BakeryApp api={mockApi} daemonUrl="http://127.0.0.1:47123" />);
+    const { lastFrame, stdin, unmount } = render(<BakeryApp api={mockApi} daemonUrl="http://127.0.0.1:47123" />);
     const writeSpy = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
 
     try {
@@ -163,31 +175,93 @@ describe("BakeryApp", () => {
       await waitForFrameContains(lastFrame, "Copied pie id: p1");
     } finally {
       writeSpy.mockRestore();
+      unmount();
+    }
+  });
+
+  it("opens slice metadata modal and supports navigation plus copy shortcuts", async () => {
+    const mockApi = createMockApi();
+    const { lastFrame, stdin, unmount } = render(<BakeryApp api={mockApi} daemonUrl="http://127.0.0.1:47123" />);
+    const writeSpy = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+
+    try {
+      stdin.write("\t");
+      await waitForFrameContains(lastFrame, "Pies / Slices (focused)");
+
+      stdin.write("j");
+      await waitForFrameContains(lastFrame, "> ●   s1");
+
+      stdin.write("\r");
+      await waitForFrameContains(lastFrame, "Actions: slice s1");
+
+      const frameWithSliceActions = lastFrame() ?? "";
+      const viewIndex = frameWithSliceActions.indexOf("View metadata");
+      const copyIndex = frameWithSliceActions.indexOf("Copy primary URL");
+      expect(viewIndex).toBeGreaterThanOrEqual(0);
+      expect(copyIndex).toBeGreaterThanOrEqual(0);
+      expect(viewIndex).toBeLessThan(copyIndex);
+
+      stdin.write("\r");
+      await waitForFrameContains(lastFrame, "Metadata: slice s1");
+      await waitForFrameContains(lastFrame, "[-] slice {7}");
+      await waitForFrameContains(lastFrame, "[+] resources [1]");
+
+      stdin.write("\u001B[B");
+      await waitForFrameContains(lastFrame, ">   id: \"s1\"");
+
+      stdin.write("\r");
+
+      stdin.write("c");
+
+      stdin.write("k");
+      await waitForFrameContains(lastFrame, "> [-] slice {7}");
+
+      stdin.write("h");
+      await waitForFrameContains(lastFrame, "> [+] slice {7}");
+
+      stdin.write("\u001B[C");
+      await waitForFrameContains(lastFrame, "> [-] slice {7}");
+
+      stdin.write("C");
+      stdin.write("\u001B");
+      await waitForFrameContains(lastFrame, "Actions: slice s1");
+
+      stdin.write("\u001B");
+      await waitForFrameContains(lastFrame, "Copied value (id): s1");
+      await waitForFrameContains(lastFrame, "Copied path: id");
+      await waitForFrameContains(lastFrame, "Copied JSON subtree for");
+    } finally {
+      writeSpy.mockRestore();
+      unmount();
     }
   });
 
   it("prints canonical JSON after prompt-based slice create", async () => {
     const mockApi = createMockApi();
-    const { lastFrame, stdin } = render(<BakeryApp api={mockApi} daemonUrl="http://127.0.0.1:47123" />);
+    const { lastFrame, stdin, unmount } = render(<BakeryApp api={mockApi} daemonUrl="http://127.0.0.1:47123" />);
 
-    await typeAndSubmit(stdin, "slice create");
-    await waitForFrameContains(lastFrame, "Pie (id or slug):");
-    await typeAndSubmit(stdin, "app");
-    await waitForFrameContains(lastFrame, "Worktree path:");
-    await typeAndSubmit(stdin, "");
-    await waitForFrameContains(lastFrame, "Branch:");
-    await typeAndSubmit(stdin, "");
-    await waitForFrameContains(lastFrame, "Num resources:");
-    await typeAndSubmit(stdin, "1");
+    try {
+      await typeAndSubmit(stdin, "slice create");
+      await waitForFrameContains(lastFrame, "Pie (id or slug):");
+      await typeAndSubmit(stdin, "app");
+      await waitForFrameContains(lastFrame, "Worktree path:");
+      await typeAndSubmit(stdin, "");
+      await waitForFrameContains(lastFrame, "Branch:");
+      await typeAndSubmit(stdin, "");
+      await waitForFrameContains(lastFrame, "Num resources:");
+      await typeAndSubmit(stdin, "1");
 
-    await waitForCondition(
-      () => (mockApi.createSlice as unknown as { mock: { calls: unknown[] } }).mock.calls.length === 1
-    );
-    expect(mockApi.createSlice).toHaveBeenCalledWith({
-      pieId: "app",
-      worktreePath: ".",
-      branch: "main",
-      resources: [{ key: "r1", protocol: "http", expose: "primary" }]
-    });
+      await waitForCondition(
+        () => (mockApi.createSlice as unknown as { mock: { calls: unknown[] } }).mock.calls.length === 1
+      );
+      expect(mockApi.createSlice).toHaveBeenCalledWith({
+        pieId: "app",
+        worktreePath: ".",
+        branch: "main",
+        resources: [{ key: "r1", protocol: "http", expose: "primary" }]
+      });
+    } finally {
+      unmount();
+    }
   });
 });
