@@ -110,5 +110,9 @@ export async function handleRemoveSlice(
   }
 
   await deps.orchestrator.removeSlice(slice);
-  deps.repo.appendAuditLog({ kind: "slice.deleted", pieId: pie.id, sliceId: slice.id, payload: {} });
+  deps.repo.appendAuditLog({
+    kind: "slice.deleted",
+    pieId: pie.id,
+    payload: { deletedSliceId: slice.id }
+  });
 }

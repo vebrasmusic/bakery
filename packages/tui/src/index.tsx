@@ -9,6 +9,7 @@ import {
   fetchDaemonStatus,
   listPies,
   listSlices,
+  removePie,
   removeSlice,
   resolveDaemonUrl,
   stopSlice,
@@ -40,6 +41,9 @@ function buildApi(daemonUrl: string): TuiCommandApi {
     fetchStatus: () => fetchDaemonStatus({ daemonUrl }),
     listPies: () => listPies({ daemonUrl }),
     createPie: (input) => createPie(input, { daemonUrl }),
+    removePie: async (pieId) => {
+      await removePie(pieId, { daemonUrl });
+    },
     listSlices: (query) => listSlices(query, { daemonUrl }),
     createSlice: (input) => createSlice(input, { daemonUrl }),
     stopSlice: async (sliceId) => {

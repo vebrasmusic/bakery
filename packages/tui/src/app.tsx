@@ -22,6 +22,7 @@ type PromptState =
   | { kind: "none" }
   | { kind: "pie-name" }
   | { kind: "pie-repo"; name: string }
+  | { kind: "pie-rm-confirm"; pieId: string }
   | { kind: "slice-pie" }
   | { kind: "slice-worktree"; pieId: string }
   | { kind: "slice-branch"; pieId: string; worktreePath: string }
@@ -107,6 +108,23 @@ export function BakeryApp({ api, daemonUrl }: BakeryAppProps): React.ReactElemen
           setPrompt({ kind: "none" });
           break;
         }
+        case "pie-rm-confirm": {
+          if (trimmed.toLowerCase() !== "yes") {
+            addOutput("Pie rm cancelled.", "info");
+            setPrompt({ kind: "none" });
+            break;
+          }
+          try {
+            await api.removePie(prompt.pieId);
+            addOutput(`Removed pie ${prompt.pieId}`, "success");
+            void refreshDashboard();
+          } catch (removeError: unknown) {
+            const errorMessage = removeError instanceof Error ? removeError.message : "Unknown error";
+            addOutput(`Error: ${errorMessage}`, "error");
+          }
+          setPrompt({ kind: "none" });
+          break;
+        }
         case "slice-pie": {
           if (!trimmed) {
             addOutput("Slice create cancelled: pie is required.", "error");
@@ -171,6 +189,10 @@ export function BakeryApp({ api, daemonUrl }: BakeryAppProps): React.ReactElemen
       }
       if (parsed.kind === "slice-create-prompt") {
         setPrompt({ kind: "slice-pie" });
+        return;
+      }
+      if (parsed.kind === "pie-rm") {
+        setPrompt({ kind: "pie-rm-confirm", pieId: parsed.id });
         return;
       }
       if (parsed.kind === "quit") {
@@ -239,6 +261,8 @@ export function BakeryApp({ api, daemonUrl }: BakeryAppProps): React.ReactElemen
         return { label: "Pie name:" };
       case "pie-repo":
         return { label: "Repo path (optional):", defaultValue: "" };
+      case "pie-rm-confirm":
+        return { label: `Type yes to delete pie ${prompt.pieId}:` };
       case "slice-pie":
         return { label: "Pie (id or slug):" };
       case "slice-worktree":

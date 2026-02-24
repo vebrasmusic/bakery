@@ -30,7 +30,12 @@ describe("commands", () => {
     });
   });
 
+  it("parses pie rm", () => {
+    expect(parseCommand("pie rm app")).toEqual({ kind: "pie-rm", id: "app" });
+  });
+
   it("renders help", () => {
     expect(helpText()).toContain("slice create");
+    expect(helpText()).toContain("pie rm <id-or-slug>");
   });
 });

@@ -87,8 +87,10 @@ export async function handleRemovePie(
     deps.repo.appendAuditLog({
       kind: "slice.deleted",
       pieId: pie.id,
-      sliceId: slice.id,
-      payload: { reason: "pie.deleted" }
+      payload: {
+        reason: "pie.deleted",
+        deletedSliceId: slice.id
+      }
     });
   }
 

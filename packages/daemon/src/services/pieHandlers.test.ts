@@ -59,6 +59,20 @@ describe("pieHandlers", () => {
     expect(orchestrator.removeSlice).toHaveBeenNthCalledWith(2, slices[1]);
     expect(repo.deletePie).toHaveBeenCalledWith("pie-1");
     expect(repo.appendAuditLog).toHaveBeenCalledTimes(3);
+    const firstAuditLog = repo.appendAuditLog.mock.calls[0]?.[0];
+    const secondAuditLog = repo.appendAuditLog.mock.calls[1]?.[0];
+    expect(firstAuditLog).toMatchObject({
+      kind: "slice.deleted",
+      pieId: "pie-1",
+      payload: { reason: "pie.deleted", deletedSliceId: "slice-running" }
+    });
+    expect(firstAuditLog?.sliceId).toBeUndefined();
+    expect(secondAuditLog).toMatchObject({
+      kind: "slice.deleted",
+      pieId: "pie-1",
+      payload: { reason: "pie.deleted", deletedSliceId: "slice-stopped" }
+    });
+    expect(secondAuditLog?.sliceId).toBeUndefined();
   });
 
   it("throws when pie is missing", async () => {

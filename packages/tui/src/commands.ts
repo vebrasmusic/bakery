@@ -15,6 +15,7 @@ export type TuiCommand =
   | { kind: "pie-list" }
   | { kind: "pie-create-prompt" }
   | { kind: "pie-create"; name: string; repoPath?: string }
+  | { kind: "pie-rm"; id: string }
   | { kind: "slice-list"; pieId?: string; all: boolean }
   | { kind: "slice-create-prompt" }
   | { kind: "slice-create"; pieId: string; worktreePath: string; branch: string; numResources: number }
@@ -26,6 +27,7 @@ export interface TuiCommandApi {
   fetchStatus: () => Promise<StatusResponse>;
   listPies: () => Promise<ListPiesResponse>;
   createPie: (input: CreatePieRequest) => Promise<{ pie: { id: string; slug: string } }>;
+  removePie: (pieId: string) => Promise<void>;
   listSlices: (query: { pieId?: string; all?: boolean }) => Promise<ListSlicesResponse>;
   createSlice: (input: CreateSliceRequest) => Promise<{ slice: { id: string; host: string; status: string; resources: unknown[] } }>;
   stopSlice: (sliceId: string) => Promise<void>;
@@ -112,7 +114,10 @@ export function parseCommand(input: string): TuiCommand {
         ? { kind: "pie-create", name: args[0], repoPath: args[1] }
         : { kind: "pie-create", name: args[0] };
     }
-    return { kind: "unknown", reason: "Usage: pie create [<name> [repoPath]] | pie ls" };
+    if (sub === "rm" && args[0]) {
+      return { kind: "pie-rm", id: args[0] };
+    }
+    return { kind: "unknown", reason: "Usage: pie create [<name> [repoPath]] | pie ls | pie rm <id-or-slug>" };
   }
   if (head === "slice") {
     const [sub, ...args] = rest;
@@ -170,6 +175,7 @@ export function helpText(): string {
     "  status",
     "  pie ls",
     "  pie create [<name> [repoPath]]",
+    "  pie rm <id-or-slug>",
     "  slice ls [--all | --pie <id-or-slug>]",
     "  slice create [<pie> <worktreePath> <branch> <numresources>]",
     "  slice stop <sliceId>",
@@ -249,6 +255,11 @@ export async function executeCommand(command: TuiCommand, api: TuiCommandApi): P
         repoPath: command.repoPath ? path.resolve(command.repoPath) : undefined
       });
       return { output: `Created pie ${created.pie.slug} (${created.pie.id})`, refresh: true };
+    }
+
+    if (command.kind === "pie-rm") {
+      await api.removePie(command.id);
+      return { output: `Removed pie ${command.id}`, refresh: true };
     }
 
     if (command.kind === "slice-list") {

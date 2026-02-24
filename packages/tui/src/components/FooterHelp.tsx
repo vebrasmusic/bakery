@@ -9,7 +9,7 @@ export function FooterHelp(): React.ReactElement {
         Enter: submit {"\u00B7"} Esc: cancel {"\u00B7"} Ctrl+C: exit
       </Text>
       <Text color={colors.dimmed}>
-        cmds: status {"\u00B7"} pie ls {"\u00B7"} pie create {"\u00B7"} slice ls {"\u00B7"} slice create
+        cmds: status {"\u00B7"} pie ls {"\u00B7"} pie create {"\u00B7"} pie rm {"\u00B7"} slice ls {"\u00B7"} slice create
       </Text>
     </Box>
   );

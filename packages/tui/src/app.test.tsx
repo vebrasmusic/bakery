@@ -4,6 +4,17 @@ import { render } from "ink-testing-library";
 import type { TuiCommandApi } from "./commands.js";
 import { BakeryApp } from "./app.js";
 
+async function typeAndSubmit(stdin: { write: (data: string) => void }, command: string): Promise<void> {
+  for (const character of command) {
+    stdin.write(character);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  stdin.write("\r");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+}
+
 function createMockApi(): TuiCommandApi {
   return {
     fetchStatus: vi.fn().mockResolvedValue({
@@ -38,6 +49,7 @@ function createMockApi(): TuiCommandApi {
       ],
     }),
     createPie: vi.fn().mockResolvedValue({ pie: { id: "p2", slug: "new-pie" } }),
+    removePie: vi.fn().mockResolvedValue(undefined),
     createSlice: vi.fn().mockResolvedValue({
       slice: { id: "s2", host: "new-s1.localtest.me", status: "creating", resources: [] },
     }),
@@ -82,5 +94,33 @@ describe("BakeryApp", () => {
     stdin.write("\r");
     const frame = lastFrame();
     expect(frame).toContain("Output");
+  });
+
+  it("cancels pie rm when confirmation is not yes", async () => {
+    const mockApi = createMockApi();
+    const { lastFrame, stdin } = render(
+      <BakeryApp api={mockApi} daemonUrl="http://127.0.0.1:47123" />
+    );
+
+    await typeAndSubmit(stdin, "pie rm my-app");
+    expect(lastFrame()).toContain("Type yes to delete pie my-app:");
+
+    await typeAndSubmit(stdin, "no");
+    const frame = lastFrame();
+    expect(frame).toContain("Pie rm cancelled.");
+    expect(mockApi.removePie).not.toHaveBeenCalled();
+  });
+
+  it("removes pie when confirmation is yes", async () => {
+    const mockApi = createMockApi();
+    const { lastFrame, stdin } = render(
+      <BakeryApp api={mockApi} daemonUrl="http://127.0.0.1:47123" />
+    );
+
+    await typeAndSubmit(stdin, "pie rm my-app");
+    await typeAndSubmit(stdin, "yes");
+
+    expect(mockApi.removePie).toHaveBeenCalledWith("my-app");
+    expect(lastFrame()).toContain("Removed pie my-app");
   });
 });
