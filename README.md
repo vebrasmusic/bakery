@@ -1,85 +1,120 @@
 # Bakery
 
-Bakery is a local multi-pie, multi-slice daemon for host routing and port allocation.
+Bakery is a local daemon + CLI for pie/slice routing and port allocation.
 
-## Install Modes
+## Quickstart
 
-### 1) Global CLI install
+1. Clone the repo and enter it:
 
 ```bash
-pnpm add -g bakery
+git clone <repo-url>
+cd bakery
 ```
 
-Then use from anywhere:
+2. Install the global CLI from this repo:
+
+```bash
+pnpm add -g ./packages/bakery
+```
+
+3. Verify Bakery starts:
 
 ```bash
 bakery up
+```
+
+4. Open the interactive console/dashboard:
+
+```bash
+bakery
+```
+
+## CLI Output for Worktree Setup Scripts
+
+`slice create` is useful for setup automation because it returns JSON with allocated ports and routing metadata.
+
+Create a pie once, then create a slice:
+
+```bash
+bakery pie create --name mypie
+bakery slice create --pie mypie --numresources 3
+```
+
+Example output:
+
+```json
+{
+  "id": "s1",
+  "pieId": "mypie",
+  "host": "mypie-s1.localtest.me",
+  "routerPort": 4080,
+  "url": "http://mypie-s1.localtest.me:4080",
+  "allocatedPorts": [30001, 30002, 30003],
+  "resources": [
+    {
+      "key": "r1",
+      "protocol": "http",
+      "expose": "primary",
+      "allocatedPort": 30001,
+      "routeHost": "mypie-s1.localtest.me",
+      "routeUrl": "http://mypie-s1.localtest.me:4080"
+    },
+    {
+      "key": "r2",
+      "protocol": "tcp",
+      "expose": "none",
+      "allocatedPort": 30002
+    },
+    {
+      "key": "r3",
+      "protocol": "tcp",
+      "expose": "none",
+      "allocatedPort": 30003
+    }
+  ]
+}
+```
+
+Common fields scripts use:
+- `id`
+- `pieId`
+- `host`
+- `routerPort`
+- `url`
+- `allocatedPorts`
+- `resources`
+
+## Example setup.sh snippet (env generation)
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+PIE_NAME="${PIE_NAME:-mypie}"
+NUM_RESOURCES="${NUM_RESOURCES:-3}"
+
+bakery up >/dev/null
+bakery pie create --name "$PIE_NAME" >/dev/null 2>&1 || true
+
+SLICE_JSON="$(bakery slice create --pie "$PIE_NAME" --numresources "$NUM_RESOURCES")"
+
+cat > .env.worktree <<EOF
+BAKERY_SLICE_ID=$(echo "$SLICE_JSON" | jq -r '.id')
+BAKERY_PIE_ID=$(echo "$SLICE_JSON" | jq -r '.pieId')
+BAKERY_HOST=$(echo "$SLICE_JSON" | jq -r '.host')
+BAKERY_ROUTER_PORT=$(echo "$SLICE_JSON" | jq -r '.routerPort')
+BAKERY_URL=$(echo "$SLICE_JSON" | jq -r '.url // ""')
+BAKERY_PORT_1=$(echo "$SLICE_JSON" | jq -r '.allocatedPorts[0]')
+BAKERY_PORT_2=$(echo "$SLICE_JSON" | jq -r '.allocatedPorts[1]')
+BAKERY_PORT_3=$(echo "$SLICE_JSON" | jq -r '.allocatedPorts[2]')
+EOF
+```
+
+This pattern lets agent/worktree bootstrap scripts create deterministic env files from Bakery CLI output.
+
+## Optional next commands
+
+```bash
 bakery status
-bakery pie create --name myapp
-bakery slice create --pie myapp --numresources 3
-bakery pie rm --id myapp --force
 bakery down
 ```
-
-### 2) Per-repo install (recommended for project scripts)
-
-In your project repo:
-
-```bash
-pnpm add -D bakery @bakery/slice
-```
-
-Then:
-
-```bash
-pnpm exec bakery up
-pnpm exec bakery pie create --name myapp
-pnpm exec bakery slice create --pie myapp --numresources 3
-pnpm exec bakery pie rm --id myapp --force
-pnpm exec slice create --pie myapp --numresources 3
-```
-
-## Local Workspace Testing (this repo)
-
-From this workspace, you can install globally from local path:
-
-```bash
-pnpm --global add /Users/andresharisaduvvuri/Documents/GitHub/bakery/packages/bakery
-```
-
-Or in another repo, install from local path:
-
-```bash
-pnpm add -D /Users/andresharisaduvvuri/Documents/GitHub/bakery/packages/bakery
-pnpm add -D /Users/andresharisaduvvuri/Documents/GitHub/bakery/packages/slice
-```
-
-## Runtime Model
-
-- No compose/manifest required for pie/slice creation.
-- `slice create` allocates free ports and returns canonical JSON fields for tooling:
-  - `id`, `pieId`, `host`, `routerPort`, `url` (primary route), `allocatedPorts`, `resources`.
-- You run your own runtime scripts using those ports.
-- Daemon provides host routing only.
-- `bakery` (no subcommand) launches the interactive dashboard TUI.
-
-## Startup Script (workspace)
-
-`./bakery` delegates to the CLI entrypoint in this workspace.
-Examples:
-
-```bash
-./bakery up
-./bakery status --watch
-./bakery
-```
-
-## API Notes
-
-- No headers are required for local daemon APIs.
-- Env vars prefix: `BAKERY_`
-
-## Architecture Explainer
-
-Open:
-- `docs/bakery-explainer.html`
