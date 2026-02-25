@@ -1,0 +1,4 @@
+interface:
+  display_name: "Bakery Worktree Bootstrap"
+  short_description: "Patch Node repos for Bakery dev setup"
+  default_prompt: "Patch this Node repo for Bakery-based worktree setup/dev scripts."
