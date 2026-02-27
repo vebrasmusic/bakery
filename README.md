@@ -114,7 +114,7 @@ This pattern lets agent/worktree bootstrap scripts create deterministic env file
 
 ## Limitations
 
-- OAuth flows that require redirect URIs (for example Google) are not working right now because everything is effectively `localhost`. You would need to manually add the generated Bakery URL to your OAuth provider console. Email/password auth works.
+- Bakery forwards slice hostnames to upstream apps, but OAuth providers still require explicit redirect URI allowlisting. For flows like Google OAuth, add the generated Bakery URL to your provider console.
 - Only tested with Better Auth so far.
 
 ## Optional next commands
