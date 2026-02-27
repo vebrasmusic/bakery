@@ -3,17 +3,24 @@ set -euo pipefail
 
 usage() {
   cat <<'USAGE'
-Usage: ./setup.sh --pie <pie-id-or-slug> --numresources <n>
+Usage: ./bootstrap-bakery.sh --pie <pie-id-or-slug> --numresources <n>
 
 Options:
   --pie <id-or-slug>   Required Bakery pie identifier
   --numresources <n>   Required number of resources to allocate
   -h, --help           Show this help
+
+Environment:
+  BAKERY_ENV_FILE      Target env file for Bakery-managed keys (default: .env.bakery)
+  BAKERY_ENV_TEMPLATE  Optional template to copy only when BAKERY_ENV_FILE is missing
+
+Sync example:
+  set -a; source ./.env.bakery; set +a
 USAGE
 }
 
-log() { printf '[setup.sh] %s\n' "$*"; }
-fail() { printf '[setup.sh] ERROR: %s\n' "$*" >&2; exit 1; }
+log() { printf '[bootstrap-bakery.sh] %s\n' "$*"; }
+fail() { printf '[bootstrap-bakery.sh] ERROR: %s\n' "$*" >&2; exit 1; }
 
 PIE_ID=""
 NUM_RESOURCES=""
@@ -45,18 +52,21 @@ done
 [ -n "$NUM_RESOURCES" ] || { usage >&2; fail "--numresources is required"; }
 
 if ! git_root="$(git rev-parse --show-toplevel 2>/dev/null)"; then
-  fail "setup.sh must run inside a git repository"
+  fail "bootstrap-bakery.sh must run inside a git repository"
 fi
 cd "$git_root"
 
-ENV_FILE=".env"
+ENV_FILE="${BAKERY_ENV_FILE:-.env.bakery}"
+ENV_TEMPLATE="${BAKERY_ENV_TEMPLATE:-}"
 RESOURCE_PLAN_CSV="__BAKERY_RESOURCE_PLAN_CSV__"
 EXPECTED_NUM_RESOURCES="__BAKERY_EXPECTED_NUM_RESOURCES__"
+
+[ -n "$ENV_FILE" ] || fail "BAKERY_ENV_FILE must not be empty"
 
 command -v node >/dev/null 2>&1 || fail "Node.js is required"
 if ! command -v bakery >/dev/null 2>&1; then
   cat >&2 <<'ERR'
-[setup.sh] ERROR: bakery was not found on PATH.
+[bootstrap-bakery.sh] ERROR: bakery was not found on PATH.
 
 Install Bakery globally first, then retry:
   pnpm --global install /path-to-bakery-repo/packages/bakery
@@ -67,7 +77,6 @@ fi
 upsert_env() {
   local key="$1"
   local value="$2"
-  touch "$ENV_FILE"
   if grep -Eq "^${key}=" "$ENV_FILE"; then
     awk -v k="$key" -v v="$value" '
       BEGIN { done = 0 }
@@ -104,9 +113,9 @@ process.exit(exists ? 0 : 1);
 NODE
   then
     cat >&2 <<ERR
-[setup.sh] ERROR: pie '${pie_id}' does not exist.
+[bootstrap-bakery.sh] ERROR: pie '${pie_id}' does not exist.
 
-Create a pie first, then rerun setup:
+Create a pie first, then rerun bootstrap:
   bakery pie create --name <name>
 
 Or list available pies:
@@ -122,12 +131,14 @@ is_positive_int() {
 
 is_positive_int "$EXPECTED_NUM_RESOURCES" || fail "Embedded expected resource count is invalid"
 is_positive_int "$NUM_RESOURCES" || fail "--numresources must be a positive integer"
-[ "$NUM_RESOURCES" = "$EXPECTED_NUM_RESOURCES" ] || fail "--numresources must be $EXPECTED_NUM_RESOURCES for this setup script"
+[ "$NUM_RESOURCES" = "$EXPECTED_NUM_RESOURCES" ] || fail "--numresources must be $EXPECTED_NUM_RESOURCES for this bootstrap script"
 
 IFS=',' read -r -a resource_plan <<<"$RESOURCE_PLAN_CSV"
 [ "${#resource_plan[@]}" -eq "$EXPECTED_NUM_RESOURCES" ] || fail "Embedded resource plan does not match expected count"
 
-bakery up >/dev/null
+if ! bakery up >/dev/null; then
+  fail "Failed to start or connect to Bakery daemon. Run 'bakery up' and retry."
+fi
 validate_pie_exists "$PIE_ID"
 
 slice_output="$(bakery slice create --pie "$PIE_ID" --numresources "$NUM_RESOURCES")"
@@ -141,7 +152,12 @@ read_json_value() {
 import fs from "node:fs";
 
 const [file, keyPath] = process.argv.slice(2);
-const data = JSON.parse(fs.readFileSync(file, "utf8"));
+let data;
+try {
+  data = JSON.parse(fs.readFileSync(file, "utf8"));
+} catch {
+  process.exit(2);
+}
 let current = data;
 for (const part of keyPath.split(".")) {
   if (current && Object.prototype.hasOwnProperty.call(current, part)) {
@@ -164,17 +180,32 @@ if (current === undefined || current === null) {
 NODE
 }
 
-slice_id="$(read_json_value "$tmp_json" id)"
-slice_url="$(read_json_value "$tmp_json" url)"
-router_port="$(read_json_value "$tmp_json" routerPort)"
-allocated_ports_csv="$(read_json_value "$tmp_json" allocatedPorts)"
+if ! slice_id="$(read_json_value "$tmp_json" id)"; then
+  rm -f "$tmp_json"
+  fail "Malformed slice JSON from bakery output"
+fi
+if ! slice_url="$(read_json_value "$tmp_json" url)"; then
+  rm -f "$tmp_json"
+  fail "Malformed slice JSON from bakery output"
+fi
+if ! router_port="$(read_json_value "$tmp_json" routerPort)"; then
+  rm -f "$tmp_json"
+  fail "Malformed slice JSON from bakery output"
+fi
+if ! allocated_ports_csv="$(read_json_value "$tmp_json" allocatedPorts)"; then
+  rm -f "$tmp_json"
+  fail "Malformed slice JSON from bakery output"
+fi
 rm -f "$tmp_json"
 
 [ -n "$slice_id" ] || fail "Failed to parse slice id from bakery output"
-[ -n "$allocated_ports_csv" ] || fail "Failed to parse allocated ports"
+[ -n "$slice_url" ] || fail "Failed to parse slice url from bakery output"
+[ -n "$router_port" ] || fail "Failed to parse router port from bakery output"
+[ -n "$allocated_ports_csv" ] || fail "Failed to parse allocated ports from bakery output"
 
 IFS=',' read -r -a allocated_ports <<<"$allocated_ports_csv"
 [ "${#allocated_ports[@]}" -eq "$EXPECTED_NUM_RESOURCES" ] || fail "Expected $EXPECTED_NUM_RESOURCES allocated ports, got ${#allocated_ports[@]}"
+is_positive_int "$router_port" || fail "Router port is not a positive integer: $router_port"
 
 role_to_env_key() {
   local role="$1"
@@ -201,6 +232,7 @@ for idx in "${!resource_plan[@]}"; do
   role="${resource_plan[$idx]}"
   port="${allocated_ports[$idx]}"
   [ -n "$port" ] || fail "Missing allocated port for role ${role}"
+  is_positive_int "$port" || fail "Allocated port for role ${role} is not a positive integer: $port"
   env_key="$(role_to_env_key "$role")"
   if [ "$env_key" = "APP_PORT" ]; then
     APP_PORT="$port"
@@ -212,9 +244,13 @@ done
 
 [ -n "$APP_PORT" ] || APP_PORT="${allocated_ports[0]}"
 
-if [ -f .env.example ] && [ ! -f "$ENV_FILE" ]; then
-  cp .env.example "$ENV_FILE"
+if [ ! -f "$ENV_FILE" ] && [ -n "$ENV_TEMPLATE" ]; then
+  [ -f "$ENV_TEMPLATE" ] || fail "BAKERY_ENV_TEMPLATE does not exist: $ENV_TEMPLATE"
+  mkdir -p "$(dirname "$ENV_FILE")"
+  cp "$ENV_TEMPLATE" "$ENV_FILE"
 fi
+
+mkdir -p "$(dirname "$ENV_FILE")"
 touch "$ENV_FILE"
 
 upsert_env BAKERY_PIE "$PIE_ID"
@@ -235,20 +271,20 @@ for idx in "${!extra_env_keys[@]}"; do
   written_values+=("$value")
 done
 
-# >>> BAKERY USER:SETUP_PRE START
-# Custom setup commands before managed logic.
-# <<< BAKERY USER:SETUP_PRE END
+sync_env_path="$ENV_FILE"
+case "$sync_env_path" in
+  /*) sync_example="set -a; source \"$sync_env_path\"; set +a" ;;
+  *) sync_example="set -a; source \"./$sync_env_path\"; set +a" ;;
+esac
 
-# >>> BAKERY MANAGED:SETUP_CORE START
-# Reserved for managed setup behavior.
-# <<< BAKERY MANAGED:SETUP_CORE END
-
-# >>> BAKERY USER:SETUP_POST START
-# Custom setup commands after managed logic.
-# <<< BAKERY USER:SETUP_POST END
-
-log "Configured slice ${slice_id} for pie ${PIE_ID}"
-log "Updated ${ENV_FILE} with:"
+log "Bootstrap complete"
+log "pie: $PIE_ID"
+log "slice id: $slice_id"
+log "bakery url: $slice_url"
+log "env file: $ENV_FILE"
+log "Updated $ENV_FILE with:"
 for idx in "${!written_keys[@]}"; do
-  printf '[setup.sh]   %s=%s\n' "${written_keys[$idx]}" "${written_values[$idx]}"
+  printf '[bootstrap-bakery.sh]   %s=%s\n' "${written_keys[$idx]}" "${written_values[$idx]}"
 done
+log "Sync example: $sync_example"
+printf '%s\n' "Run your repo setup script now (e.g. ./setup.sh or ./dev.sh)."

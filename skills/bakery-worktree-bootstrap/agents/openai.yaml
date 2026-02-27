@@ -1,4 +1,4 @@
 interface:
   display_name: "Bakery Worktree Bootstrap"
-  short_description: "Patch Node repos for deterministic Bakery setup.sh env scaffolding"
-  default_prompt: "Patch this Node repo with a minimal Bakery setup.sh that allocates slice ports and writes deterministic .env keys."
+  short_description: "Patch Node repos with bootstrap-bakery.sh for deterministic Bakery ports into .env.bakery"
+  default_prompt: "Patch this Node repo with a bootstrap-bakery.sh that allocates slice ports and writes deterministic Bakery keys to .env.bakery."

@@ -4,7 +4,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import re
 from pathlib import Path
 from typing import Any
 
@@ -20,11 +19,6 @@ COMPOSE_CANDIDATES = (
     "compose.yml",
     "compose.yaml",
     "docker-compose.worktree.yml",
-)
-
-USER_BLOCK_RE = re.compile(
-    r"(# >>> BAKERY USER:(?P<name>[A-Z_]+) START\\n)(?P<body>.*?)(# <<< BAKERY USER:(?P=name) END)",
-    re.DOTALL,
 )
 
 
@@ -117,28 +111,7 @@ def compute_resource_plan(db_provider: str, db_tool_enabled: bool) -> list[str]:
     return plan
 
 
-def extract_user_blocks(content: str) -> dict[str, str]:
-    blocks: dict[str, str] = {}
-    for match in USER_BLOCK_RE.finditer(content):
-        blocks[match.group("name")] = match.group("body")
-    return blocks
-
-
-def merge_user_blocks(template: str, existing: str | None) -> str:
-    if not existing:
-        return template
-
-    previous = extract_user_blocks(existing)
-
-    def replace(match: re.Match[str]) -> str:
-        name = match.group("name")
-        body = previous.get(name, match.group("body"))
-        return f"{match.group(1)}{body}{match.group(4)}"
-
-    return USER_BLOCK_RE.sub(replace, template)
-
-
-def render_setup_script(template: str, resource_plan: list[str]) -> str:
+def render_bootstrap_script(template: str, resource_plan: list[str]) -> str:
     resource_plan_csv = ",".join(resource_plan)
     expected_num_resources = str(len(resource_plan))
     rendered = template.replace("__BAKERY_RESOURCE_PLAN_CSV__", resource_plan_csv)
@@ -146,14 +119,13 @@ def render_setup_script(template: str, resource_plan: list[str]) -> str:
     return rendered
 
 
-def write_setup_script(project_dir: Path, template_path: Path, resource_plan: list[str]) -> None:
-    destination = project_dir / "setup.sh"
+def write_bootstrap_script(project_dir: Path, template_path: Path, resource_plan: list[str]) -> Path:
+    destination = project_dir / "bootstrap-bakery.sh"
     template = template_path.read_text(encoding="utf-8")
-    rendered = render_setup_script(template, resource_plan)
-    existing = destination.read_text(encoding="utf-8") if destination.exists() else None
-    merged = merge_user_blocks(rendered, existing)
-    destination.write_text(merged, encoding="utf-8")
+    rendered = render_bootstrap_script(template, resource_plan)
+    destination.write_text(rendered, encoding="utf-8")
     os.chmod(destination, 0o755)
+    return destination
 
 
 def print_deprecation_warnings(args: argparse.Namespace) -> None:
@@ -176,11 +148,11 @@ def print_deprecation_warnings(args: argparse.Namespace) -> None:
         return
 
     joined = ", ".join(provided)
-    print(f"[{SKILL_NAME}] WARN: Ignoring deprecated options for setup-only scaffolding: {joined}")
+    print(f"[{SKILL_NAME}] WARN: Ignoring deprecated options for bootstrap-only scaffolding: {joined}")
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Patch a Node repo for Bakery setup-only worktree scaffolding.")
+    parser = argparse.ArgumentParser(description="Patch a Node repo for Bakery bootstrap-only worktree scaffolding.")
     parser.add_argument("--target", default=".", help="Target repository path")
     parser.add_argument("--db-provider", choices=DB_PROVIDERS, default="auto")
     parser.add_argument("--compose-file", help="Compose file path")
@@ -209,14 +181,17 @@ def main(argv: list[str] | None = None) -> int:
     resource_plan = compute_resource_plan(db_provider, db_tool_enabled)
 
     templates_dir = Path(__file__).resolve().parent.parent / "assets" / "templates"
-    write_setup_script(project_dir, templates_dir / "setup.sh", resource_plan)
+    bootstrap_script_path = write_bootstrap_script(project_dir, templates_dir / "bootstrap-bakery.sh", resource_plan)
 
     print(f"[{SKILL_NAME}] Patch complete")
-    print("- mode: setup-only scaffolding")
+    print("- mode: bootstrap-only scaffolding")
     print(f"- db provider: {db_provider}")
     print(f"- frozen resource roles: {','.join(resource_plan)}")
-    print(f"- setup.sh: {project_dir / 'setup.sh'}")
-    print("- managed outputs: setup.sh only")
+    print(f"- bootstrap-bakery.sh: {bootstrap_script_path}")
+    print("- managed outputs: bootstrap-bakery.sh only")
+    print("- handoff: run ./bootstrap-bakery.sh, then run your repo-owned setup/dev script")
+    if (project_dir / "setup.sh").exists():
+        print("- note: setup.sh is repo-owned and not managed by this skill")
     return 0
 
 
