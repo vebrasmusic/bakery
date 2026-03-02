@@ -24,6 +24,7 @@ fail() { printf '[bootstrap-bakery.sh] ERROR: %s\n' "$*" >&2; exit 1; }
 
 PIE_ID=""
 NUM_RESOURCES=""
+JSON_PARSER=""
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -63,16 +64,26 @@ EXPECTED_NUM_RESOURCES="__BAKERY_EXPECTED_NUM_RESOURCES__"
 
 [ -n "$ENV_FILE" ] || fail "BAKERY_ENV_FILE must not be empty"
 
-command -v node >/dev/null 2>&1 || fail "Node.js is required"
 if ! command -v bakery >/dev/null 2>&1; then
   cat >&2 <<'ERR'
 [bootstrap-bakery.sh] ERROR: bakery was not found on PATH.
 
-Install Bakery globally first, then retry:
-  pnpm --global install /path-to-bakery-repo/packages/bakery
+Install the Bakery CLI first, then retry.
 ERR
   exit 1
 fi
+
+select_json_parser() {
+  if command -v python3 >/dev/null 2>&1; then
+    JSON_PARSER="python3"
+    return
+  fi
+  if command -v jq >/dev/null 2>&1; then
+    JSON_PARSER="jq"
+    return
+  fi
+  fail "Either python3 or jq is required to parse Bakery JSON output"
+}
 
 upsert_env() {
   local key="$1"
@@ -90,28 +101,105 @@ upsert_env() {
   fi
 }
 
+read_json_value() {
+  local file="$1"
+  local key="$2"
+
+  if [ "$JSON_PARSER" = "python3" ]; then
+    python3 - "$file" "$key" <<'PY'
+import json
+import sys
+
+file_path, key_path = sys.argv[1], sys.argv[2]
+try:
+    with open(file_path, "r", encoding="utf-8") as handle:
+        data = json.load(handle)
+except Exception:
+    sys.exit(2)
+
+current = data
+for part in key_path.split("."):
+    if isinstance(current, dict) and part in current:
+        current = current[part]
+    else:
+        current = None
+        break
+
+if current is None:
+    sys.stdout.write("")
+elif isinstance(current, list):
+    sys.stdout.write(",".join(str(item) for item in current))
+elif isinstance(current, bool):
+    sys.stdout.write("true" if current else "false")
+else:
+    sys.stdout.write(str(current))
+PY
+    return
+  fi
+
+  jq -r --arg path "$key" '
+    def read_path($parts):
+      reduce $parts[] as $part (
+        .;
+        if type == "object" and has($part) then .[$part] else null end
+      );
+
+    (read_path($path | split("."))) as $value
+    | if $value == null then ""
+      elif ($value | type) == "array" then ($value | map(tostring) | join(","))
+      elif ($value | type) == "boolean" then (if $value then "true" else "false" end)
+      else ($value | tostring)
+      end
+  ' "$file"
+}
+
 validate_pie_exists() {
   local pie_id="$1"
   local pies_json
   pies_json="$(bakery pie ls --json)"
-  if ! PIES_JSON="$pies_json" node --input-type=module - "$pie_id" <<'NODE'
 
-const [pieId] = process.argv.slice(2);
-const raw = process.env.PIES_JSON ?? "";
-let payload;
-try {
-  payload = JSON.parse(raw);
-} catch {
-  process.exit(1);
-}
-const pies = Array.isArray(payload?.pies) ? payload.pies : [];
-const exists = pies.some((pie) => {
-  if (!pie || typeof pie !== "object") return false;
-  return pie.id === pieId || pie.slug === pieId || pie.name === pieId;
-});
-process.exit(exists ? 0 : 1);
-NODE
-  then
+  if [ "$JSON_PARSER" = "python3" ]; then
+    if ! PIES_JSON="$pies_json" python3 - "$pie_id" <<'PY'
+import json
+import os
+import sys
+
+pie_id = sys.argv[1]
+raw = os.environ.get("PIES_JSON", "")
+try:
+    payload = json.loads(raw)
+except Exception:
+    sys.exit(1)
+
+pies = payload.get("pies") if isinstance(payload, dict) else []
+if not isinstance(pies, list):
+    sys.exit(1)
+
+exists = any(
+    isinstance(pie, dict)
+    and (pie.get("id") == pie_id or pie.get("slug") == pie_id or pie.get("name") == pie_id)
+    for pie in pies
+)
+sys.exit(0 if exists else 1)
+PY
+    then
+      cat >&2 <<ERR
+[bootstrap-bakery.sh] ERROR: pie '${pie_id}' does not exist.
+
+Create a pie first, then rerun bootstrap:
+  bakery pie create --name <name>
+
+Or list available pies:
+  bakery pie ls
+ERR
+      exit 1
+    fi
+    return
+  fi
+
+  if ! printf '%s' "$pies_json" | jq -e --arg pie_id "$pie_id" '
+    (.pies // []) | any(.id == $pie_id or .slug == $pie_id or .name == $pie_id)
+  ' >/dev/null; then
     cat >&2 <<ERR
 [bootstrap-bakery.sh] ERROR: pie '${pie_id}' does not exist.
 
@@ -129,6 +217,8 @@ is_positive_int() {
   [[ "$1" =~ ^[1-9][0-9]*$ ]]
 }
 
+select_json_parser
+
 is_positive_int "$EXPECTED_NUM_RESOURCES" || fail "Embedded expected resource count is invalid"
 is_positive_int "$NUM_RESOURCES" || fail "--numresources must be a positive integer"
 [ "$NUM_RESOURCES" = "$EXPECTED_NUM_RESOURCES" ] || fail "--numresources must be $EXPECTED_NUM_RESOURCES for this bootstrap script"
@@ -144,41 +234,6 @@ validate_pie_exists "$PIE_ID"
 slice_output="$(bakery slice create --pie "$PIE_ID" --numresources "$NUM_RESOURCES")"
 tmp_json="$(mktemp)"
 printf '%s\n' "$slice_output" >"$tmp_json"
-
-read_json_value() {
-  local file="$1"
-  local key="$2"
-  node --input-type=module - "$file" "$key" <<'NODE'
-import fs from "node:fs";
-
-const [file, keyPath] = process.argv.slice(2);
-let data;
-try {
-  data = JSON.parse(fs.readFileSync(file, "utf8"));
-} catch {
-  process.exit(2);
-}
-let current = data;
-for (const part of keyPath.split(".")) {
-  if (current && Object.prototype.hasOwnProperty.call(current, part)) {
-    current = current[part];
-  } else {
-    current = undefined;
-    break;
-  }
-}
-
-if (current === undefined || current === null) {
-  process.stdout.write("");
-} else if (Array.isArray(current)) {
-  process.stdout.write(current.map((value) => String(value)).join(","));
-} else if (typeof current === "boolean") {
-  process.stdout.write(current ? "true" : "false");
-} else {
-  process.stdout.write(String(current));
-}
-NODE
-}
 
 if ! slice_id="$(read_json_value "$tmp_json" id)"; then
   rm -f "$tmp_json"
@@ -207,43 +262,6 @@ IFS=',' read -r -a allocated_ports <<<"$allocated_ports_csv"
 [ "${#allocated_ports[@]}" -eq "$EXPECTED_NUM_RESOURCES" ] || fail "Expected $EXPECTED_NUM_RESOURCES allocated ports, got ${#allocated_ports[@]}"
 is_positive_int "$router_port" || fail "Router port is not a positive integer: $router_port"
 
-role_to_env_key() {
-  local role="$1"
-  case "$role" in
-    app) echo "APP_PORT" ;;
-    db) echo "DB_PORT" ;;
-    dbTool) echo "DB_TOOL_PORT" ;;
-    *)
-      local normalized="$role"
-      normalized="$(printf '%s' "$normalized" | sed -E 's/([a-z0-9])([A-Z])/\1_\2/g')"
-      normalized="$(printf '%s' "$normalized" | tr '[:lower:]- ' '[:upper:]__')"
-      normalized="$(printf '%s' "$normalized" | sed -E 's/[^A-Z0-9_]/_/g; s/_+/_/g; s/^_+|_+$//g')"
-      [ -n "$normalized" ] || normalized="RESOURCE"
-      printf '%s_PORT\n' "$normalized"
-      ;;
-  esac
-}
-
-APP_PORT=""
-extra_env_keys=()
-extra_env_values=()
-
-for idx in "${!resource_plan[@]}"; do
-  role="${resource_plan[$idx]}"
-  port="${allocated_ports[$idx]}"
-  [ -n "$port" ] || fail "Missing allocated port for role ${role}"
-  is_positive_int "$port" || fail "Allocated port for role ${role} is not a positive integer: $port"
-  env_key="$(role_to_env_key "$role")"
-  if [ "$env_key" = "APP_PORT" ]; then
-    APP_PORT="$port"
-  else
-    extra_env_keys+=("$env_key")
-    extra_env_values+=("$port")
-  fi
-done
-
-[ -n "$APP_PORT" ] || APP_PORT="${allocated_ports[0]}"
-
 if [ ! -f "$ENV_FILE" ] && [ -n "$ENV_TEMPLATE" ]; then
   [ -f "$ENV_TEMPLATE" ] || fail "BAKERY_ENV_TEMPLATE does not exist: $ENV_TEMPLATE"
   mkdir -p "$(dirname "$ENV_FILE")"
@@ -257,18 +275,35 @@ upsert_env BAKERY_PIE "$PIE_ID"
 upsert_env BAKERY_SLICE_ID "$slice_id"
 upsert_env BAKERY_URL "$slice_url"
 upsert_env BAKERY_ROUTER_PORT "$router_port"
-upsert_env APP_PORT "$APP_PORT"
-upsert_env PORT "$APP_PORT"
+upsert_env BAKERY_RESOURCE_PLAN "$RESOURCE_PLAN_CSV"
+upsert_env BAKERY_RESOURCE_COUNT "$EXPECTED_NUM_RESOURCES"
 
-written_keys=("BAKERY_PIE" "BAKERY_SLICE_ID" "BAKERY_URL" "BAKERY_ROUTER_PORT" "APP_PORT" "PORT")
-written_values=("$PIE_ID" "$slice_id" "$slice_url" "$router_port" "$APP_PORT" "$APP_PORT")
+written_keys=(
+  "BAKERY_PIE"
+  "BAKERY_SLICE_ID"
+  "BAKERY_URL"
+  "BAKERY_ROUTER_PORT"
+  "BAKERY_RESOURCE_PLAN"
+  "BAKERY_RESOURCE_COUNT"
+)
+written_values=(
+  "$PIE_ID"
+  "$slice_id"
+  "$slice_url"
+  "$router_port"
+  "$RESOURCE_PLAN_CSV"
+  "$EXPECTED_NUM_RESOURCES"
+)
 
-for idx in "${!extra_env_keys[@]}"; do
-  key="${extra_env_keys[$idx]}"
-  value="${extra_env_values[$idx]}"
-  upsert_env "$key" "$value"
-  written_keys+=("$key")
-  written_values+=("$value")
+for idx in "${!resource_plan[@]}"; do
+  role="${resource_plan[$idx]}"
+  port="${allocated_ports[$idx]}"
+  [ -n "$port" ] || fail "Missing allocated port for resource ${role}"
+  is_positive_int "$port" || fail "Allocated port for resource ${role} is not a positive integer: $port"
+  env_key="RESOURCE_$((idx + 1))_PORT"
+  upsert_env "$env_key" "$port"
+  written_keys+=("$env_key")
+  written_values+=("$port")
 done
 
 sync_env_path="$ENV_FILE"
@@ -281,6 +316,7 @@ log "Bootstrap complete"
 log "pie: $PIE_ID"
 log "slice id: $slice_id"
 log "bakery url: $slice_url"
+log "resource plan: $RESOURCE_PLAN_CSV"
 log "env file: $ENV_FILE"
 log "Updated $ENV_FILE with:"
 for idx in "${!written_keys[@]}"; do

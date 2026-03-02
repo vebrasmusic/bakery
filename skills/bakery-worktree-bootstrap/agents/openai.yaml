@@ -1,4 +1,4 @@
 interface:
   display_name: "Bakery Worktree Bootstrap"
-  short_description: "Patch Node repos with bootstrap-bakery.sh for deterministic Bakery ports into .env.bakery"
-  default_prompt: "Patch this Node repo with a bootstrap-bakery.sh that allocates slice ports and writes deterministic Bakery keys to .env.bakery."
+  short_description: "Detect repo resources across stacks, confirm with user, then scaffold bootstrap-bakery.sh with deterministic Bakery ports into .env.bakery"
+  default_prompt: "Patch this repo with a stack-agnostic bootstrap-bakery.sh: detect resources (compose first, then heuristics), list them with evidence, ask for user confirmation, and freeze the confirmed list into deterministic Bakery env keys in .env.bakery."

@@ -4,15 +4,10 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 from pathlib import Path
-from typing import Any
 
 SKILL_NAME = "bakery-worktree-bootstrap"
-DB_PROVIDERS = ("auto", "postgres", "mysql", "sqlite", "none")
-DOCKER_DB_PROVIDERS = {"postgres", "mysql"}
-
-DB_TOOL_CANDIDATES = ("db:studio", "studio", "prisma:studio", "drizzle:studio")
-
 COMPOSE_CANDIDATES = (
     "docker-compose.yml",
     "docker-compose.yaml",
@@ -21,42 +16,16 @@ COMPOSE_CANDIDATES = (
     "docker-compose.worktree.yml",
 )
 
+RESOURCE_NAME_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+$")
+COMPOSE_KEY_PATTERN = re.compile(r"^(\s*)([A-Za-z0-9_.-]+)\s*:\s*(?:#.*)?$")
+
 
 def fail(message: str) -> None:
     raise SystemExit(f"[{SKILL_NAME}] ERROR: {message}")
 
 
-def load_package_json(project_dir: Path) -> dict[str, Any]:
-    package_json_path = project_dir / "package.json"
-    if not package_json_path.exists():
-        fail("Missing package.json. Node.js repositories only in v1.")
-
-    try:
-        data = json.loads(package_json_path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
-        fail(f"Invalid package.json: {exc}")
-
-    if not isinstance(data, dict):
-        fail("package.json root must be a JSON object.")
-
-    return data
-
-
-def detect_script_name(pkg: dict[str, Any], candidates: tuple[str, ...]) -> str:
-    scripts = pkg.get("scripts") if isinstance(pkg.get("scripts"), dict) else {}
-    for candidate in candidates:
-        if candidate in scripts:
-            return candidate
-    return ""
-
-
-def determine_db_tool_enabled(value: str | None, detected: bool) -> bool:
-    if value is None:
-        return detected
-    stripped = value.strip()
-    if not stripped or stripped.lower() == "none":
-        return False
-    return True
+def read_text(path: Path) -> str:
+    return path.read_text(encoding="utf-8", errors="ignore")
 
 
 def detect_compose_file(project_dir: Path, explicit: str | None) -> Path | None:
@@ -79,36 +48,231 @@ def detect_compose_file(project_dir: Path, explicit: str | None) -> Path | None:
     return None
 
 
-def infer_db_provider(pkg: dict[str, Any], compose_content: str, explicit_provider: str) -> str:
-    if explicit_provider != "auto":
-        return explicit_provider
+def extract_compose_services(compose_content: str) -> list[str]:
+    lines = compose_content.splitlines()
+    services_indent: int | None = None
+    service_item_indent: int | None = None
+    services: list[str] = []
 
-    lower_compose = compose_content.lower()
-    if "postgres" in lower_compose:
-        return "postgres"
-    if "mysql" in lower_compose or "mariadb" in lower_compose:
-        return "mysql"
+    for line in lines:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
 
-    deps: dict[str, str] = {}
+        if services_indent is None:
+            match = COMPOSE_KEY_PATTERN.match(line)
+            if not match:
+                continue
+            key = match.group(2)
+            if key != "services":
+                continue
+            services_indent = len(match.group(1))
+            continue
+
+        indent = len(line) - len(line.lstrip(" "))
+        if indent <= services_indent:
+            break
+
+        match = COMPOSE_KEY_PATTERN.match(line)
+        if not match:
+            continue
+
+        key_indent = len(match.group(1))
+        key = match.group(2)
+        if service_item_indent is None:
+            service_item_indent = key_indent
+
+        if key_indent == service_item_indent and key not in services:
+            services.append(key)
+
+    return services
+
+
+def parse_resources_csv(raw_value: str) -> list[str]:
+    resources: list[str] = []
+    seen: set[str] = set()
+
+    for token in raw_value.split(","):
+        resource = token.strip()
+        if not resource:
+            continue
+        if not RESOURCE_NAME_PATTERN.match(resource):
+            fail(
+                "Invalid resource name "
+                f"'{resource}'. Use only letters, numbers, '.', '_' or '-'."
+            )
+        if resource in seen:
+            fail(f"Duplicate resource name: {resource}")
+        resources.append(resource)
+        seen.add(resource)
+
+    if not resources:
+        fail("--resources must include at least one resource name")
+
+    return resources
+
+
+def parse_package_json_dependencies(path: Path) -> set[str]:
+    if not path.exists():
+        return set()
+
+    try:
+        payload = json.loads(read_text(path))
+    except json.JSONDecodeError:
+        return set()
+
+    if not isinstance(payload, dict):
+        return set()
+
+    deps: set[str] = set()
     for key in ("dependencies", "devDependencies", "peerDependencies", "optionalDependencies"):
-        value = pkg.get(key)
-        if isinstance(value, dict):
-            deps.update({str(dep): str(version) for dep, version in value.items()})
+        maybe_obj = payload.get(key)
+        if isinstance(maybe_obj, dict):
+            for dep in maybe_obj.keys():
+                deps.add(str(dep).lower())
 
-    dep_keys = set(deps.keys())
-    if {"better-sqlite3", "sqlite3", "@libsql/client"} & dep_keys:
-        return "sqlite"
-
-    return "none"
+    return deps
 
 
-def compute_resource_plan(db_provider: str, db_tool_enabled: bool) -> list[str]:
-    plan = ["app"]
-    if db_provider in DOCKER_DB_PROVIDERS:
-        plan.append("db")
-    if db_tool_enabled:
-        plan.append("dbTool")
-    return plan
+def file_contains_any(path: Path, needles: tuple[str, ...]) -> bool:
+    if not path.exists() or not path.is_file():
+        return False
+    haystack = read_text(path).lower()
+    return any(needle in haystack for needle in needles)
+
+
+def detect_resources_from_repo(project_dir: Path) -> tuple[list[str], list[str]]:
+    evidence: list[str] = []
+
+    frontend = False
+    backend = False
+    db = False
+
+    next_configs = (
+        "next.config.js",
+        "next.config.ts",
+        "next.config.mjs",
+        "next.config.cjs",
+    )
+    if any((project_dir / name).exists() for name in next_configs):
+        frontend = True
+        evidence.append("Found Next.js config file.")
+
+    deps = parse_package_json_dependencies(project_dir / "package.json")
+    if "next" in deps:
+        frontend = True
+        evidence.append("Detected 'next' dependency in package.json.")
+    if "react" in deps and "next" not in deps and "vite" in deps:
+        frontend = True
+        evidence.append("Detected frontend stack indicators ('react' + 'vite') in package.json.")
+
+    frontend_dirs = (
+        "frontend",
+        "client",
+        "web",
+        "apps/web",
+        "packages/web",
+    )
+    if any((project_dir / rel).exists() for rel in frontend_dirs):
+        frontend = True
+        evidence.append("Found frontend-oriented directory (frontend/client/web/apps-web).")
+
+    backend_dirs = (
+        "backend",
+        "api",
+        "server",
+        "apps/api",
+        "packages/api",
+    )
+    if any((project_dir / rel).exists() for rel in backend_dirs):
+        backend = True
+        evidence.append("Found backend-oriented directory (backend/api/server/apps-api).")
+
+    if (project_dir / "go.mod").exists() or (project_dir / "manage.py").exists():
+        backend = True
+        evidence.append("Found backend runtime marker (go.mod or manage.py).")
+
+    fastapi_files = (
+        project_dir / "pyproject.toml",
+        project_dir / "requirements.txt",
+        project_dir / "requirements-dev.txt",
+        project_dir / "main.py",
+        project_dir / "app.py",
+        project_dir / "backend/main.py",
+        project_dir / "backend/app.py",
+    )
+    if any(file_contains_any(path, ("fastapi",)) for path in fastapi_files):
+        backend = True
+        evidence.append("Detected FastAPI marker in Python project files.")
+
+    db_marker_files = (
+        "alembic.ini",
+        "prisma/schema.prisma",
+        "drizzle.config.ts",
+        "drizzle.config.js",
+        "drizzle.config.mts",
+        "drizzle.config.cts",
+    )
+    if any((project_dir / rel).exists() for rel in db_marker_files):
+        db = True
+        evidence.append("Found DB tooling file (alembic/prisma/drizzle).")
+
+    if (project_dir / "migrations").exists() or (project_dir / "prisma").exists():
+        db = True
+        evidence.append("Found migrations/prisma directory.")
+
+    env_candidates = (
+        project_dir / ".env",
+        project_dir / ".env.example",
+        project_dir / ".env.local",
+    )
+    if any(file_contains_any(path, ("database_url", "postgres", "mysql", "mariadb")) for path in env_candidates):
+        db = True
+        evidence.append("Detected DB connection marker in env file.")
+
+    resources: list[str] = []
+    if frontend:
+        resources.append("frontend")
+    if backend:
+        resources.append("backend")
+    if not resources:
+        resources.append("app")
+        evidence.append("No strong frontend/backend indicators found; defaulting to 'app'.")
+    if db:
+        resources.append("db")
+
+    return resources, evidence
+
+
+def discover_resources(project_dir: Path, explicit_compose_file: str | None) -> dict[str, object]:
+    compose_path = detect_compose_file(project_dir, explicit_compose_file)
+    evidence: list[str] = []
+
+    if compose_path is not None:
+        compose_content = read_text(compose_path)
+        services = extract_compose_services(compose_content)
+        if services:
+            evidence.append(f"Detected compose file: {compose_path}")
+            evidence.append(f"Compose services (in file order): {', '.join(services)}")
+            return {
+                "source": "compose",
+                "compose_file": str(compose_path),
+                "resources": services,
+                "evidence": evidence,
+            }
+
+        evidence.append(
+            f"Compose file was found ({compose_path}) but services could not be parsed; falling back to repo heuristics."
+        )
+
+    fallback_resources, fallback_evidence = detect_resources_from_repo(project_dir)
+    evidence.extend(fallback_evidence)
+    return {
+        "source": "heuristic",
+        "compose_file": str(compose_path) if compose_path else None,
+        "resources": fallback_resources,
+        "evidence": evidence,
+    }
 
 
 def render_bootstrap_script(template: str, resource_plan: list[str]) -> str:
@@ -130,6 +294,8 @@ def write_bootstrap_script(project_dir: Path, template_path: Path, resource_plan
 
 def print_deprecation_warnings(args: argparse.Namespace) -> None:
     deprecated_fields = (
+        "db_provider",
+        "db_tool_cmd",
         "package_manager",
         "dev_cmd",
         "db_service",
@@ -148,20 +314,50 @@ def print_deprecation_warnings(args: argparse.Namespace) -> None:
         return
 
     joined = ", ".join(provided)
-    print(f"[{SKILL_NAME}] WARN: Ignoring deprecated options for bootstrap-only scaffolding: {joined}")
+    print(f"[{SKILL_NAME}] WARN: Ignoring deprecated options for stack-agnostic bootstrap scaffolding: {joined}")
+
+
+def print_detect_output(output_format: str, payload: dict[str, object]) -> None:
+    if output_format == "json":
+        print(json.dumps(payload, indent=2))
+        return
+
+    resources = payload["resources"]
+    evidence = payload["evidence"]
+    source = payload["source"]
+    compose_file = payload.get("compose_file")
+
+    print(f"[{SKILL_NAME}] Resource detection")
+    print(f"- source: {source}")
+    if compose_file:
+        print(f"- compose file: {compose_file}")
+    print(f"- proposed resources ({len(resources)}): {', '.join(resources)}")
+    if evidence:
+        print("- evidence:")
+        for line in evidence:
+            print(f"  - {line}")
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Patch a Node repo for Bakery bootstrap-only worktree scaffolding.")
+    parser = argparse.ArgumentParser(
+        description=(
+            "Patch a repository for Bakery bootstrap-only worktree scaffolding with "
+            "stack-agnostic resource discovery."
+        )
+    )
     parser.add_argument("--target", default=".", help="Target repository path")
-    parser.add_argument("--db-provider", choices=DB_PROVIDERS, default="auto")
-    parser.add_argument("--compose-file", help="Compose file path")
-    parser.add_argument("--db-tool-cmd", help="Explicit DB tool command; pass 'none' to disable")
-    parser.add_argument("--package-manager", help="(deprecated) Ignored in setup-only mode")
-    parser.add_argument("--dev-cmd", help="(deprecated) Ignored in setup-only mode")
-    parser.add_argument("--db-service", help="(deprecated) Ignored in setup-only mode")
-    parser.add_argument("--migrate-cmd", help="(deprecated) Ignored in setup-only mode")
-    parser.add_argument("--seed-cmd", help="(deprecated) Ignored in setup-only mode")
+    parser.add_argument("--compose-file", help="Compose file path override for detection")
+    parser.add_argument("--resources", help="Comma-separated resource list to freeze")
+    parser.add_argument("--detect-only", action="store_true", help="Only detect and print proposed resources")
+    parser.add_argument("--output-format", choices=("text", "json"), default="text", help="Detection output format")
+
+    parser.add_argument("--db-provider", help="(deprecated) Ignored in stack-agnostic mode")
+    parser.add_argument("--db-tool-cmd", help="(deprecated) Ignored in stack-agnostic mode")
+    parser.add_argument("--package-manager", help="(deprecated) Ignored in stack-agnostic mode")
+    parser.add_argument("--dev-cmd", help="(deprecated) Ignored in stack-agnostic mode")
+    parser.add_argument("--db-service", help="(deprecated) Ignored in stack-agnostic mode")
+    parser.add_argument("--migrate-cmd", help="(deprecated) Ignored in stack-agnostic mode")
+    parser.add_argument("--seed-cmd", help="(deprecated) Ignored in stack-agnostic mode")
     args = parser.parse_args(argv)
 
     print_deprecation_warnings(args)
@@ -170,23 +366,36 @@ def main(argv: list[str] | None = None) -> int:
     if not project_dir.exists() or not project_dir.is_dir():
         fail(f"Target directory does not exist: {project_dir}")
 
-    pkg = load_package_json(project_dir)
-    detected_db_tool_script = detect_script_name(pkg, DB_TOOL_CANDIDATES)
-    db_tool_enabled = determine_db_tool_enabled(args.db_tool_cmd, bool(detected_db_tool_script))
+    detection = discover_resources(project_dir, args.compose_file)
+    detected_resources = list(detection["resources"])
 
-    compose_path = detect_compose_file(project_dir, args.compose_file)
-    compose_content = compose_path.read_text(encoding="utf-8", errors="ignore") if compose_path else ""
+    if args.resources:
+        confirmed_resources = parse_resources_csv(args.resources)
+        detection["resources"] = confirmed_resources
+        detection["source"] = "user"
+        detection_evidence = list(detection["evidence"])
+        detection_evidence.append("Resources overridden via --resources.")
+        detection["evidence"] = detection_evidence
 
-    db_provider = infer_db_provider(pkg, compose_content, args.db_provider)
-    resource_plan = compute_resource_plan(db_provider, db_tool_enabled)
+    if args.detect_only:
+        print_detect_output(args.output_format, detection)
+        return 0
+
+    resource_plan = list(detection["resources"])
+    if not resource_plan:
+        fail("No resources were detected. Pass --resources explicitly.")
 
     templates_dir = Path(__file__).resolve().parent.parent / "assets" / "templates"
     bootstrap_script_path = write_bootstrap_script(project_dir, templates_dir / "bootstrap-bakery.sh", resource_plan)
 
     print(f"[{SKILL_NAME}] Patch complete")
     print("- mode: bootstrap-only scaffolding")
-    print(f"- db provider: {db_provider}")
-    print(f"- frozen resource roles: {','.join(resource_plan)}")
+    print(f"- detection source: {detection['source']}")
+    if detection.get("compose_file"):
+        print(f"- compose file: {detection['compose_file']}")
+    print(f"- detected resources: {','.join(detected_resources)}")
+    print(f"- frozen resources: {','.join(resource_plan)}")
+    print(f"- expected --numresources: {len(resource_plan)}")
     print(f"- bootstrap-bakery.sh: {bootstrap_script_path}")
     print("- managed outputs: bootstrap-bakery.sh only")
     print("- handoff: run ./bootstrap-bakery.sh, then run your repo-owned setup/dev script")
